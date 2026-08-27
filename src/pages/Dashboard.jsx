@@ -1,7 +1,7 @@
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { createClinicDoctor, createClinicUser, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getUserClinics, saveClinicProfile, updateClinicProfile } from "../services/api";
+import { createClinicDoctor, createClinicUser, getClinicDashboard, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getUserClinics, saveClinicProfile, updateClinicProfile } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
@@ -26,6 +26,14 @@ function initials(user) {
   const name = `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
   if (name) return name.split(/\s+/).slice(0, 2).map((x) => x[0]).join("").toUpperCase();
   return (user?.username || "CA").slice(0, 2).toUpperCase();
+}
+
+function formatTime(time) {
+  if (!time) return "-";
+  const [hours, minutes] = time.split(":").map(Number);
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const displayHours = hours % 12 || 12;
+  return `${String(displayHours).padStart(2, "0")}:${String(minutes).padStart(2, "0")} ${suffix}`;
 }
 
 function Modal({ title, children, onClose, onSave, saveLabel = "Save", saveDisabled = false }) {
@@ -76,6 +84,8 @@ export default function Dashboard() {
   const role = user?.role || "CLINIC ADMIN";
   const avatar = initials(user);
   const canManageStaff = ["SUPER_ADMIN", "CLINIC_ADMIN"].includes(String(role).toUpperCase());
+  const canManageSettings = String(role).toUpperCase() === "SUPER_ADMIN";
+  const isSuperAdmin = String(role).toUpperCase() === "SUPER_ADMIN";
 
   useEffect(() => {
     let cancelled = false;
@@ -156,7 +166,7 @@ export default function Dashboard() {
         <div className="nav-section">Administration</div>
         {canManageStaff && <NavButton active={page === "staff"} onClick={() => go("staff")} icon="♙">Staff & Users</NavButton>}
         <NavButton active={page === "reports"} onClick={() => go("reports")} icon="▥">Reports</NavButton>
-        {canManageStaff && <NavButton active={page === "settings"} onClick={() => go("settings")} icon="⚙">Settings</NavButton>}
+        {canManageSettings && <NavButton active={page === "settings"} onClick={() => go("settings")} icon="⚙">Settings</NavButton>}
 
         <div className="sidebar-bottom">
           <div className="user-mini">
@@ -201,7 +211,7 @@ export default function Dashboard() {
 
         <div className="content">
           {page === "dashboard" && (
-            <DashboardHome go={go} openModal={setModal} />
+            <DashboardHome go={go} openModal={setModal} clinicId={selectedClinicId} token={token} />
           )}
 
           {page === "appointments" && (
@@ -250,7 +260,7 @@ export default function Dashboard() {
 
           {page === "reports" && <Reports showToast={showToast} />}
 
-          {page === "settings" && canManageStaff && <Settings showToast={showToast} clinicId={selectedClinicId} token={token} />}
+          {page === "settings" && canManageSettings && <Settings showToast={showToast} clinicId={selectedClinicId} token={token} />}
         </div>
       </main>
 
@@ -344,8 +354,9 @@ export default function Dashboard() {
               setStaffError("A clinic-admin login token is required.");
               return;
             }
-            const required = ["username", "email", "password", "firstName", "lastName", "phone", "clinicId"];
-            if (required.some((key) => !String(staffForm[key]).trim())) {
+            const clinicId = isSuperAdmin ? staffForm.clinicId : selectedClinicId;
+            const required = ["username", "email", "password", "firstName", "lastName", "phone"];
+            if (required.some((key) => !String(staffForm[key]).trim()) || !String(clinicId).trim()) {
               setStaffError("Please fill all required fields.");
               return;
             }
@@ -359,7 +370,7 @@ export default function Dashboard() {
                 lastName: staffForm.lastName.trim(),
                 phone: staffForm.phone.trim(),
                 role: staffForm.role,
-                clinicId: Number(staffForm.clinicId),
+                clinicId: Number(clinicId),
                 doctorId: staffForm.doctorId ? Number(staffForm.doctorId) : null
               }, token);
               setModal(null);
@@ -384,7 +395,7 @@ export default function Dashboard() {
             <Field label="First Name *" value={staffForm.firstName} onChange={(e) => setStaffForm(v => ({...v, firstName:e.target.value}))} />
             <Field label="Last Name *" value={staffForm.lastName} onChange={(e) => setStaffForm(v => ({...v, lastName:e.target.value}))} />
             <div className="field"><label>Role *</label><select value={staffForm.role} onChange={(e) => setStaffForm(v => ({...v, role:e.target.value}))}><option>STAFF</option><option>DOCTOR</option><option>CLINIC_ADMIN</option></select></div>
-            <Field label="Clinic ID *" type="number" min="1" value={staffForm.clinicId} onChange={(e) => setStaffForm(v => ({...v, clinicId:e.target.value}))} />
+            <Field label="Clinic ID *" type="number" min="1" value={isSuperAdmin ? staffForm.clinicId : selectedClinicId} onChange={isSuperAdmin ? (e) => setStaffForm(v => ({...v, clinicId:e.target.value})) : undefined} disabled={!isSuperAdmin} />
             <Field label="Doctor ID" type="number" min="1" value={staffForm.doctorId} onChange={(e) => setStaffForm(v => ({...v, doctorId:e.target.value}))} placeholder="Optional" />
           </div>
         </Modal>
@@ -418,7 +429,40 @@ function Field({ label, select, options = [], ...props }) {
   );
 }
 
-function DashboardHome({ go, openModal }) {
+function DashboardHome({ go, openModal, clinicId, token }) {
+  const [dashboard, setDashboard] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDashboard() {
+      if (!token || !clinicId) {
+        setDashboard(null);
+        setLoading(false);
+        setError(!token ? "Please log in to view the dashboard." : "Please select a clinic.");
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError("");
+        const result = await getClinicDashboard(clinicId, token);
+        if (!cancelled) setDashboard(result);
+      } catch (err) {
+        if (!cancelled) setError(err.message || "Unable to load dashboard data.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadDashboard();
+    return () => { cancelled = true; };
+  }, [clinicId, token]);
+
+  const schedule = dashboard?.todaySchedule || [];
+
   return (
     <section className="page active">
       <div className="welcome">
@@ -426,11 +470,12 @@ function DashboardHome({ go, openModal }) {
         <p>Here is what's happening at Sunrise Multispeciality today.</p>
       </div>
 
+      {error && <div className="auth-error">{error}</div>}
       <div className="grid-4">
-        <Kpi label="Today's Appointments" value="18" footer="↑ 12% vs yesterday" />
-        <Kpi label="Pending Appointments" value="4" footer="2 need attention" />
-        <Kpi label="Total Patients" value="1,248" footer="↑ 8.4% this month" />
-        <Kpi label="Active Doctors" value="7" footer="6 available today" />
+        <Kpi label="Today's Appointments" value={loading ? "..." : dashboard?.todayAppointments ?? 0} footer="For selected clinic" />
+        <Kpi label="Pending Appointments" value={loading ? "..." : dashboard?.pendingAppointments ?? 0} footer="Needs attention" />
+        <Kpi label="Total Patients" value={loading ? "..." : dashboard?.totalPatients ?? 0} footer="For selected clinic" />
+        <Kpi label="Active Doctors" value={loading ? "..." : dashboard?.activeDoctors ?? 0} footer="Currently active" />
       </div>
 
       <div className="grid-2 mt">
@@ -441,11 +486,13 @@ function DashboardHome({ go, openModal }) {
           </div>
           <div className="card-body">
             <div className="schedule-list">
-              {appointments.map((a) => (
-                <div className="schedule-row" key={a[0]}>
-                  <div className="time">{a[5]}</div>
-                  <div><div className="patient-name">{a[0]}</div><div className="patient-meta">{a[2]} · {a[3]}</div></div>
-                  <span className={`status ${a[6].toLowerCase()}`}>{a[6]}</span>
+              {loading && <p className="muted">Loading today&apos;s schedule...</p>}
+              {!loading && schedule.length === 0 && <p className="muted">No appointments scheduled today.</p>}
+              {!loading && schedule.map((appointment) => (
+                <div className="schedule-row" key={appointment.id}>
+                  <div className="time">{formatTime(appointment.startTime)}</div>
+                  <div><div className="patient-name">{appointment.patientName}</div><div className="patient-meta">{appointment.serviceName} · {appointment.doctorName}</div></div>
+                  <span className={`status ${appointment.status.toLowerCase()}`}>{appointment.status}</span>
                 </div>
               ))}
             </div>

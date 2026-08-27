@@ -106,6 +106,14 @@ export function getClinicPatients(clinicId, token) {
   });
 }
 
+export function getClinicDashboard(clinicId, token) {
+  return request(`/api/dashboard/${clinicId}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
+
 export function saveClinicProfile(payload, token) {
   return request("/api/dashboard/clinics", {
     method: "POST",
