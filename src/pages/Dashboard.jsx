@@ -1,7 +1,7 @@
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { createClinicDoctor, createClinicUser, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getUserClinics, saveClinicProfile, updateClinicProfile } from "../services/api";
+import { createClinicDoctor, createClinicService, createClinicUser, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getUserClinics, saveClinicProfile, updateClinicProfile } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
@@ -74,6 +74,10 @@ export default function Dashboard() {
   const [doctorLoading, setDoctorLoading] = useState(false);
   const [doctorError, setDoctorError] = useState("");
   const [doctorRefreshKey, setDoctorRefreshKey] = useState(0);
+  const [serviceForm, setServiceForm] = useState({ name: "", durationMinutes: "30", price: "" });
+  const [serviceLoading, setServiceLoading] = useState(false);
+  const [serviceError, setServiceError] = useState("");
+  const [serviceRefreshKey, setServiceRefreshKey] = useState(0);
   const [clinics, setClinics] = useState([]);
   const [selectedClinicId, setSelectedClinicId] = useState(user?.clinicId || "");
 
@@ -232,6 +236,7 @@ export default function Dashboard() {
               showToast={showToast}
               clinicId={selectedClinicId}
               token={token}
+              refreshKey={serviceRefreshKey}
             />
           )}
 
@@ -320,12 +325,54 @@ export default function Dashboard() {
       )}
 
       {modal === "service" && (
-        <Modal title="Add Service" onClose={() => setModal(null)} onSave={() => { setModal(null); showToast("Service added"); }} saveLabel="Add Service">
+        <Modal
+          title="Add Service"
+          onClose={() => { setModal(null); setServiceError(""); }}
+          onSave={async () => {
+            setServiceError("");
+            if (!token) {
+              setServiceError("A clinic-admin login token is required.");
+              return;
+            }
+            if (!selectedClinicId) {
+              setServiceError("Please select a clinic first.");
+              return;
+            }
+            if (!serviceForm.name.trim() || !String(serviceForm.durationMinutes).trim() || !String(serviceForm.price).trim()) {
+              setServiceError("Please fill all required fields.");
+              return;
+            }
+            const durationMinutes = Number(serviceForm.durationMinutes);
+            const price = Number(serviceForm.price);
+            if (!Number.isFinite(durationMinutes) || durationMinutes <= 0 || !Number.isFinite(price) || price < 0) {
+              setServiceError("Duration and price must be valid numbers.");
+              return;
+            }
+            try {
+              setServiceLoading(true);
+              await createClinicService(selectedClinicId, {
+                name: serviceForm.name.trim(),
+                durationMinutes,
+                price,
+              }, token);
+              setModal(null);
+              setServiceForm({ name: "", durationMinutes: "30", price: "" });
+              setServiceRefreshKey((value) => value + 1);
+              showToast("Service added successfully");
+            } catch (err) {
+              setServiceError(err.message || "Unable to add service.");
+            } finally {
+              setServiceLoading(false);
+            }
+          }}
+          saveLabel={serviceLoading ? "Adding..." : "Add Service"}
+          saveDisabled={serviceLoading}
+        >
+          {serviceError && <div className="auth-error">{serviceError}</div>}
           <div className="form-grid">
-            <Field label="Service Name" placeholder="Consultation" />
-            <Field label="Duration" select options={["30 minutes", "45 minutes", "60 minutes"]} />
-            <Field label="Price" type="number" placeholder="0" />
-            <Field label="Status" select options={["Active", "Inactive"]} />
+            <Field label="Service Name *" placeholder="Consultation" value={serviceForm.name} onChange={(e) => setServiceForm((value) => ({ ...value, name: e.target.value }))} />
+            <Field label="Duration (minutes) *" type="number" min="1" value={serviceForm.durationMinutes} onChange={(e) => setServiceForm((value) => ({ ...value, durationMinutes: e.target.value }))} />
+            <Field label="Price *" type="number" min="0" step="0.01" placeholder="0.00" value={serviceForm.price} onChange={(e) => setServiceForm((value) => ({ ...value, price: e.target.value }))} />
           </div>
         </Modal>
       )}
@@ -721,7 +768,7 @@ function Doctors({ openModal, showToast, clinicId, token, refreshKey }) {
   </div></section>;
 }
 
-function Services({ openModal, showToast, clinicId, token }) {
+function Services({ openModal, showToast, clinicId, token, refreshKey }) {
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -751,7 +798,7 @@ function Services({ openModal, showToast, clinicId, token }) {
 
     loadServices();
     return () => { cancelled = true; };
-  }, [clinicId, token]);
+  }, [clinicId, token, refreshKey]);
 
   return <section className="page active"><div className="card">
     <div className="card-header"><div><h3>Services</h3><p>Services offered by this clinic</p></div><button className="btn btn-primary" onClick={() => openModal("service")}>+ Add Service</button></div>

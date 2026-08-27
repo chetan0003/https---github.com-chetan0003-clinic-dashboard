@@ -74,6 +74,16 @@ export function getClinicServices(clinicId, token) {
   });
 }
 
+export function createClinicService(clinicId, payload, token) {
+  return request(`/api/dashboard/clinics/${clinicId}/services`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getClinicUsers(clinicId, token) {
   return request(`/api/clinic-admin/users/${clinicId}`, {
     headers: {
