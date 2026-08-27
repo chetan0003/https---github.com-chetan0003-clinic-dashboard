@@ -1,7 +1,7 @@
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { createClinicUser, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getUserClinics, saveClinicProfile, updateClinicProfile } from "../services/api";
+import { createClinicDoctor, createClinicUser, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getUserClinics, saveClinicProfile, updateClinicProfile } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
@@ -62,6 +62,10 @@ export default function Dashboard() {
   const [staffLoading, setStaffLoading] = useState(false);
   const [staffError, setStaffError] = useState("");
   const [staffRefreshKey, setStaffRefreshKey] = useState(0);
+  const [doctorForm, setDoctorForm] = useState({ name: "", specialization: "" });
+  const [doctorLoading, setDoctorLoading] = useState(false);
+  const [doctorError, setDoctorError] = useState("");
+  const [doctorRefreshKey, setDoctorRefreshKey] = useState(0);
   const [clinics, setClinics] = useState([]);
   const [selectedClinicId, setSelectedClinicId] = useState(user?.clinicId || "");
 
@@ -221,6 +225,7 @@ export default function Dashboard() {
               showToast={showToast}
               clinicId={selectedClinicId}
               token={token}
+              refreshKey={doctorRefreshKey}
             />
           )}
 
@@ -273,12 +278,46 @@ export default function Dashboard() {
       )}
 
       {modal === "doctor" && (
-        <Modal title="Add Doctor" onClose={() => setModal(null)} onSave={() => { setModal(null); showToast("Doctor added"); }} saveLabel="Add Doctor">
+        <Modal
+          title="Add Doctor"
+          onClose={() => { setModal(null); setDoctorError(""); }}
+          onSave={async () => {
+            setDoctorError("");
+            if (!token) {
+              setDoctorError("A clinic-admin login token is required.");
+              return;
+            }
+            if (!selectedClinicId) {
+              setDoctorError("Please select a clinic first.");
+              return;
+            }
+            if (!doctorForm.name.trim() || !doctorForm.specialization.trim()) {
+              setDoctorError("Please fill all required fields.");
+              return;
+            }
+            try {
+              setDoctorLoading(true);
+              await createClinicDoctor(selectedClinicId, {
+                name: doctorForm.name.trim(),
+                specialization: doctorForm.specialization.trim(),
+              }, token);
+              setModal(null);
+              setDoctorForm({ name: "", specialization: "" });
+              setDoctorRefreshKey((value) => value + 1);
+              showToast("Doctor added successfully");
+            } catch (err) {
+              setDoctorError(err.message || "Unable to add doctor.");
+            } finally {
+              setDoctorLoading(false);
+            }
+          }}
+          saveLabel={doctorLoading ? "Adding..." : "Add Doctor"}
+          saveDisabled={doctorLoading}
+        >
+          {doctorError && <div className="auth-error">{doctorError}</div>}
           <div className="form-grid">
-            <Field label="Doctor Name" placeholder="Dr ..." />
-            <Field label="Specialization" placeholder="Dentist / MD / etc." />
-            <Field label="Email" />
-            <Field label="Phone" />
+            <Field label="Doctor Name *" placeholder="Dr ..." value={doctorForm.name} onChange={(e) => setDoctorForm((value) => ({ ...value, name: e.target.value }))} />
+            <Field label="Specialization *" placeholder="Dentist / MD / etc." value={doctorForm.specialization} onChange={(e) => setDoctorForm((value) => ({ ...value, specialization: e.target.value }))} />
           </div>
         </Modal>
       )}
@@ -565,7 +604,7 @@ function Patients({ openModal, showToast, clinicId, token }) {
   </div></section>;
 }
 
-function Doctors({ openModal, showToast, clinicId, token }) {
+function Doctors({ openModal, showToast, clinicId, token, refreshKey }) {
   const [doctors, setDoctors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -595,7 +634,7 @@ function Doctors({ openModal, showToast, clinicId, token }) {
 
     loadDoctors();
     return () => { cancelled = true; };
-  }, [clinicId, token]);
+  }, [clinicId, token, refreshKey]);
 
   return <section className="page active"><div className="card">
     <div className="card-header"><div><h3>Doctors</h3><p>Doctors registered with this clinic</p></div><button className="btn btn-primary" onClick={() => openModal("doctor")}>+ Add Doctor</button></div>
