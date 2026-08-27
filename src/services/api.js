@@ -114,6 +114,21 @@ export function getClinicDashboard(clinicId, token) {
   });
 }
 
+export function getClinicAppointments(clinicId, filters, token) {
+  const query = new URLSearchParams();
+  if (filters.from) query.set("from", filters.from);
+  if (filters.to) query.set("to", filters.to);
+  if (filters.doctorId) query.set("doctorId", filters.doctorId);
+  if (filters.serviceId) query.set("serviceId", filters.serviceId);
+  if (filters.status) query.set("status", filters.status);
+
+  return request(`/api/dashboard/clinics/${clinicId}/appointments?${query.toString()}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
+
 export function saveClinicProfile(payload, token) {
   return request("/api/dashboard/clinics", {
     method: "POST",

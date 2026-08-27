@@ -1,7 +1,7 @@
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { createClinicDoctor, createClinicUser, getClinicDashboard, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getUserClinics, saveClinicProfile, updateClinicProfile } from "../services/api";
+import { createClinicDoctor, createClinicUser, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getUserClinics, saveClinicProfile, updateClinicProfile } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
@@ -124,20 +124,6 @@ export default function Dashboard() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  const filteredAppointments = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return appointments.filter((a) => {
-      const matchesService = !serviceFilter || a[2] === serviceFilter;
-      const matchesDoctor = !doctorFilter || a[3] === doctorFilter;
-      const matchesSearch =
-        !q ||
-        a[0].toLowerCase().includes(q) ||
-        a[2].toLowerCase().includes(q) ||
-        a[3].toLowerCase().includes(q);
-      return matchesService && matchesDoctor && matchesSearch;
-    });
-  }, [serviceFilter, doctorFilter, search]);
-
   return (
     <div className="app">
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
@@ -216,11 +202,11 @@ export default function Dashboard() {
 
           {page === "appointments" && (
             <Appointments
-              rows={filteredAppointments}
-              serviceFilter={serviceFilter}
-              doctorFilter={doctorFilter}
-              setServiceFilter={setServiceFilter}
-              setDoctorFilter={setDoctorFilter}
+              clinicId={selectedClinicId}
+              token={token}
+              userRole={role}
+              userDoctorId={user?.doctorId || user?.doctor?.id}
+              search={search}
               openModal={setModal}
               showToast={showToast}
             />
@@ -360,6 +346,9 @@ export default function Dashboard() {
               setStaffError("Please fill all required fields.");
               return;
             }
+            const roleToCreate = isSuperAdmin
+              ? staffForm.role
+              : ["STAFF", "DOCTOR"].includes(staffForm.role) ? staffForm.role : "STAFF";
             try {
               setStaffLoading(true);
               await createClinicUser({
@@ -369,7 +358,7 @@ export default function Dashboard() {
                 firstName: staffForm.firstName.trim(),
                 lastName: staffForm.lastName.trim(),
                 phone: staffForm.phone.trim(),
-                role: staffForm.role,
+                role: roleToCreate,
                 clinicId: Number(clinicId),
                 doctorId: staffForm.doctorId ? Number(staffForm.doctorId) : null
               }, token);
@@ -394,7 +383,7 @@ export default function Dashboard() {
             <Field label="Phone *" value={staffForm.phone} onChange={(e) => setStaffForm(v => ({...v, phone:e.target.value}))} placeholder="+91..." />
             <Field label="First Name *" value={staffForm.firstName} onChange={(e) => setStaffForm(v => ({...v, firstName:e.target.value}))} />
             <Field label="Last Name *" value={staffForm.lastName} onChange={(e) => setStaffForm(v => ({...v, lastName:e.target.value}))} />
-            <div className="field"><label>Role *</label><select value={staffForm.role} onChange={(e) => setStaffForm(v => ({...v, role:e.target.value}))}><option>STAFF</option><option>DOCTOR</option><option>CLINIC_ADMIN</option></select></div>
+            <div className="field"><label>Role *</label><select value={staffForm.role} onChange={(e) => setStaffForm(v => ({...v, role:e.target.value}))}><option>STAFF</option><option>DOCTOR</option>{isSuperAdmin && <option>CLINIC_ADMIN</option>}</select></div>
             <Field label="Clinic ID *" type="number" min="1" value={isSuperAdmin ? staffForm.clinicId : selectedClinicId} onChange={isSuperAdmin ? (e) => setStaffForm(v => ({...v, clinicId:e.target.value})) : undefined} disabled={!isSuperAdmin} />
             <Field label="Doctor ID" type="number" min="1" value={staffForm.doctorId} onChange={(e) => setStaffForm(v => ({...v, doctorId:e.target.value}))} placeholder="Optional" />
           </div>
@@ -559,45 +548,78 @@ function InfoLine({ left, right, positive }) {
   return <div className="info-line"><span>{left}</span><strong className={positive ? "up" : ""}>{right}</strong></div>;
 }
 
-function Appointments({ rows, serviceFilter, doctorFilter, setServiceFilter, setDoctorFilter, openModal, showToast }) {
-  return (
-    <section className="page active">
-      <div className="card">
-        <div className="card-header">
-          <div><h3>Appointments</h3><p>Manage and monitor clinic appointments</p></div>
-          <button className="btn btn-primary" onClick={() => openModal("appointment")}>+ New Appointment</button>
-        </div>
-        <div className="filters">
-          <input className="control" type="date" defaultValue="2026-08-24" />
-          <select className="control" value={serviceFilter} onChange={(e) => setServiceFilter(e.target.value)}>
-            <option value="">All Services</option>
-            <option>Dental Consultation</option><option>Teeth Cleaning</option><option>Health Consultation</option>
-          </select>
-          <select className="control" value={doctorFilter} onChange={(e) => setDoctorFilter(e.target.value)}>
-            <option value="">All Doctors</option><option>Dr Patel</option><option>Dr Sharma</option><option>Dr Nikhil</option>
-          </select>
-          <select className="control"><option>All Status</option><option>Confirmed</option><option>Pending</option><option>Cancelled</option></select>
-          <button className="btn btn-outline" onClick={() => showToast("Filters applied")}>Apply</button>
-        </div>
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Patient</th><th>Service</th><th>Doctor</th><th>Date</th><th>Time</th><th>Status</th><th>Action</th></tr></thead>
-            <tbody>
-              {rows.map((a) => (
-                <tr key={a[0]}>
-                  <td><div className="patient-cell"><div className="small-avatar">{a[1]}</div><div><strong>{a[0]}</strong><span>+91 98765 43210</span></div></div></td>
-                  <td>{a[2]}</td><td>{a[3]}</td><td>{a[4]}</td><td>{a[5]}</td>
-                  <td><span className={`status ${a[6].toLowerCase()}`}>{a[6]}</span></td>
-                  <td><button className="btn btn-light" onClick={() => showToast("Appointment details opened")}>View</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="pagination"><span>Showing {rows.length} of 18 appointments</span><div className="page-buttons"><button>‹</button><button className="active">1</button><button>2</button><button>3</button><button>4</button><button>›</button></div></div>
-      </div>
-    </section>
-  );
+function Appointments({ clinicId, token, userRole, userDoctorId, search, openModal, showToast }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [from, setFrom] = useState(today);
+  const [to, setTo] = useState(today);
+  const [doctorId, setDoctorId] = useState("");
+  const [serviceId, setServiceId] = useState("");
+  const [status, setStatus] = useState("");
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const isDoctor = String(userRole).toUpperCase() === "DOCTOR";
+
+  useEffect(() => {
+    if (isDoctor) setDoctorId(userDoctorId ? String(userDoctorId) : "");
+  }, [isDoctor, userDoctorId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAppointments() {
+      if (!token || !clinicId) {
+        setRows([]);
+        setLoading(false);
+        setError(!token ? "Please log in to view appointments." : "Please select a clinic.");
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError("");
+        const result = await getClinicAppointments(clinicId, {
+          from,
+          to,
+          doctorId: isDoctor ? userDoctorId : doctorId,
+          serviceId,
+          status,
+        }, token);
+        if (!cancelled) setRows(Array.isArray(result) ? result : []);
+      } catch (err) {
+        if (!cancelled) setError(err.message || "Unable to load appointments.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadAppointments();
+    return () => { cancelled = true; };
+  }, [clinicId, token, from, to, doctorId, serviceId, status, isDoctor, userDoctorId]);
+
+  const filteredRows = rows.filter((appointment) => {
+    const query = search.trim().toLowerCase();
+    return !query || [appointment.patientName, appointment.serviceName, appointment.doctorName]
+      .some((value) => String(value || "").toLowerCase().includes(query));
+  });
+
+  return <section className="page active"><div className="card">
+    <div className="card-header"><div><h3>Appointments</h3><p>Manage and monitor clinic appointments</p></div><button className="btn btn-primary" onClick={() => openModal("appointment")}>+ New Appointment</button></div>
+    <div className="filters">
+      <input className="control" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+      <input className="control" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      {!isDoctor && <input className="control" type="number" min="1" placeholder="Doctor ID" value={doctorId} onChange={(e) => setDoctorId(e.target.value)} />}
+      <input className="control" type="number" min="1" placeholder="Service ID" value={serviceId} onChange={(e) => setServiceId(e.target.value)} />
+      <select className="control" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All Status</option><option value="CONFIRMED">Confirmed</option><option value="PENDING">Pending</option><option value="CANCELLED">Cancelled</option></select>
+    </div>
+    {error && <div className="auth-error">{error}</div>}
+    {loading && <div className="card-body"><p className="muted">Loading appointments...</p></div>}
+    {!loading && !error && filteredRows.length === 0 && <div className="card-body"><p className="muted">No appointments found.</p></div>}
+    {!loading && !error && filteredRows.length > 0 && <div className="table-wrap"><table><thead><tr><th>Patient</th><th>Service</th><th>Doctor</th><th>Date</th><th>Time</th><th>Status</th><th>Action</th></tr></thead><tbody>
+      {filteredRows.map((appointment) => <tr key={appointment.id}><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "-"}</strong><span>{appointment.phoneNo || appointment.patientPhone || "-"}</span></div></div></td><td>{appointment.serviceName || appointment.service?.name || "-"}</td><td>{appointment.doctorName || appointment.doctor?.name || "-"}</td><td>{appointment.appointmentDate || appointment.date || "-"}</td><td>{formatTime(appointment.startTime || appointment.time)}</td><td><span className={`status ${String(appointment.status || "").toLowerCase()}`}>{appointment.status || "-"}</span></td><td><button className="btn btn-light" onClick={() => showToast("Appointment details opened")}>View</button></td></tr>)}
+    </tbody></table></div>}
+    {!loading && !error && <div className="pagination"><span>Showing {filteredRows.length} appointments</span></div>}
+  </div></section>;
 }
 
 function Patients({ openModal, showToast, clinicId, token }) {
