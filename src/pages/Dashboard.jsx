@@ -75,6 +75,7 @@ export default function Dashboard() {
     "Chetan Admin";
   const role = user?.role || "CLINIC ADMIN";
   const avatar = initials(user);
+  const canManageStaff = ["SUPER_ADMIN", "CLINIC_ADMIN"].includes(String(role).toUpperCase());
 
   useEffect(() => {
     let cancelled = false;
@@ -153,9 +154,9 @@ export default function Dashboard() {
         <NavButton active={page === "services"} onClick={() => go("services")} icon="▤">Services</NavButton>
 
         <div className="nav-section">Administration</div>
-        <NavButton active={page === "staff"} onClick={() => go("staff")} icon="♙">Staff & Users</NavButton>
+        {canManageStaff && <NavButton active={page === "staff"} onClick={() => go("staff")} icon="♙">Staff & Users</NavButton>}
         <NavButton active={page === "reports"} onClick={() => go("reports")} icon="▥">Reports</NavButton>
-        <NavButton active={page === "settings"} onClick={() => go("settings")} icon="⚙">Settings</NavButton>
+        {canManageStaff && <NavButton active={page === "settings"} onClick={() => go("settings")} icon="⚙">Settings</NavButton>}
 
         <div className="sidebar-bottom">
           <div className="user-mini">
@@ -238,7 +239,7 @@ export default function Dashboard() {
             />
           )}
 
-          {page === "staff" && (
+          {page === "staff" && canManageStaff && (
             <Staff
               openModal={setModal}
               clinicId={selectedClinicId}
@@ -249,7 +250,7 @@ export default function Dashboard() {
 
           {page === "reports" && <Reports showToast={showToast} />}
 
-          {page === "settings" && <Settings showToast={showToast} clinicId={selectedClinicId} token={token} />}
+          {page === "settings" && canManageStaff && <Settings showToast={showToast} clinicId={selectedClinicId} token={token} />}
         </div>
       </main>
 
