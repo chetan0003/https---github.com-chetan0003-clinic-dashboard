@@ -1,7 +1,7 @@
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { createClinicUser, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, saveClinicProfile, updateClinicProfile } from "../services/api";
+import { createClinicUser, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getUserClinics, saveClinicProfile, updateClinicProfile } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
@@ -62,6 +62,8 @@ export default function Dashboard() {
   const [staffLoading, setStaffLoading] = useState(false);
   const [staffError, setStaffError] = useState("");
   const [staffRefreshKey, setStaffRefreshKey] = useState(0);
+  const [clinics, setClinics] = useState([]);
+  const [selectedClinicId, setSelectedClinicId] = useState(user?.clinicId || "");
 
   const displayName =
     `${user?.firstName || ""} ${user?.lastName || ""}`.trim() ||
@@ -69,6 +71,31 @@ export default function Dashboard() {
     "Chetan Admin";
   const role = user?.role || "CLINIC ADMIN";
   const avatar = initials(user);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadUserClinics() {
+      if (!token || !user?.username) return;
+
+      try {
+        const result = await getUserClinics(user.username, token);
+        const userClinics = Array.isArray(result?.clinic) ? result.clinic : [];
+        const availableClinics = String(role).toUpperCase() === "SUPER_ADMIN" ? userClinics : userClinics.slice(0, 1);
+        if (!cancelled) {
+          setClinics(availableClinics);
+          setSelectedClinicId((currentId) => availableClinics.some((clinic) => String(clinic.id) === String(currentId))
+            ? currentId
+            : availableClinics[0]?.id || "");
+        }
+      } catch (err) {
+        if (!cancelled) showToast(err.message || "Unable to load clinics.");
+      }
+    }
+
+    loadUserClinics();
+    return () => { cancelled = true; };
+  }, [token, user?.username, role]);
 
   function showToast(message) {
     setToast(message);
@@ -106,7 +133,10 @@ export default function Dashboard() {
 
         <div className="clinic-switcher">
           <small>Current clinic</small>
-          <strong>Sunrise Multispeciality</strong>
+          <select value={selectedClinicId} onChange={(e) => setSelectedClinicId(e.target.value)} disabled={clinics.length <= 1}>
+            {clinics.length === 0 && <option value="">Loading clinic...</option>}
+            {clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}
+          </select>
         </div>
 
         <div className="nav-section">Overview</div>
@@ -182,14 +212,14 @@ export default function Dashboard() {
           )}
 
           {page === "patients" && (
-            <Patients openModal={setModal} showToast={showToast} clinicId={user?.clinicId || 1} token={token} />
+            <Patients openModal={setModal} showToast={showToast} clinicId={selectedClinicId} token={token} />
           )}
 
           {page === "doctors" && (
             <Doctors
               openModal={setModal}
               showToast={showToast}
-              clinicId={user?.clinicId || 1}
+              clinicId={selectedClinicId}
               token={token}
             />
           )}
@@ -198,7 +228,7 @@ export default function Dashboard() {
             <Services
               openModal={setModal}
               showToast={showToast}
-              clinicId={user?.clinicId || 1}
+              clinicId={selectedClinicId}
               token={token}
             />
           )}
@@ -206,7 +236,7 @@ export default function Dashboard() {
           {page === "staff" && (
             <Staff
               openModal={setModal}
-              clinicId={user?.clinicId || 1}
+              clinicId={selectedClinicId}
               token={token}
               refreshKey={staffRefreshKey}
             />
@@ -214,7 +244,7 @@ export default function Dashboard() {
 
           {page === "reports" && <Reports showToast={showToast} />}
 
-          {page === "settings" && <Settings showToast={showToast} clinicId={user?.clinicId || 1} token={token} />}
+          {page === "settings" && <Settings showToast={showToast} clinicId={selectedClinicId} token={token} />}
         </div>
       </main>
 

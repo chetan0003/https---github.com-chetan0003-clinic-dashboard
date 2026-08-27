@@ -72,6 +72,14 @@ export function getClinicUsers(clinicId, token) {
   });
 }
 
+export function getUserClinics(username, token) {
+  return request(`/api/users?userName=${encodeURIComponent(username)}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
+
 export function getClinicProfiles(token) {
   return request("/api/dashboard/clinics", {
     headers: {
