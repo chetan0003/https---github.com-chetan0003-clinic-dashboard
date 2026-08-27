@@ -20,6 +20,9 @@ async function request(path, options = {}) {
   }
 
   if (!response.ok) {
+    if (response.status === 401) {
+      window.dispatchEvent(new Event("clinicflow:unauthorized"));
+    }
     const message =
       data?.message ||
       data?.error ||

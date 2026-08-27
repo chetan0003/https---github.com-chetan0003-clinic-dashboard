@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { login as loginApi } from "../services/api";
 
 const AuthContext = createContext(null);
@@ -39,6 +39,18 @@ export function AuthProvider({ children }) {
       return null;
     }
   });
+
+  useEffect(() => {
+    function handleUnauthorized() {
+      localStorage.removeItem("clinicflow_token");
+      localStorage.removeItem("clinicflow_user");
+      setToken(null);
+      setUser(null);
+    }
+
+    window.addEventListener("clinicflow:unauthorized", handleUnauthorized);
+    return () => window.removeEventListener("clinicflow:unauthorized", handleUnauthorized);
+  }, []);
 
   async function login(username, password) {
     const data = await loginApi(username, password);

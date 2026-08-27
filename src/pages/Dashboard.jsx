@@ -90,6 +90,7 @@ export default function Dashboard() {
   const canManageStaff = ["SUPER_ADMIN", "CLINIC_ADMIN"].includes(String(role).toUpperCase());
   const canManageSettings = String(role).toUpperCase() === "SUPER_ADMIN";
   const isSuperAdmin = String(role).toUpperCase() === "SUPER_ADMIN";
+  const selectedClinicName = clinics.find((clinic) => String(clinic.id) === String(selectedClinicId))?.name || "your clinic";
 
   useEffect(() => {
     let cancelled = false;
@@ -201,7 +202,7 @@ export default function Dashboard() {
 
         <div className="content">
           {page === "dashboard" && (
-            <DashboardHome go={go} openModal={setModal} clinicId={selectedClinicId} token={token} />
+            <DashboardHome go={go} openModal={setModal} clinicId={selectedClinicId} clinicName={selectedClinicName} token={token} />
           )}
 
           {page === "appointments" && (
@@ -465,7 +466,7 @@ function Field({ label, select, options = [], ...props }) {
   );
 }
 
-function DashboardHome({ go, openModal, clinicId, token }) {
+function DashboardHome({ go, openModal, clinicId, clinicName, token }) {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -503,7 +504,7 @@ function DashboardHome({ go, openModal, clinicId, token }) {
     <section className="page active">
       <div className="welcome">
         <h2>Good morning 👋</h2>
-        <p>Here is what's happening at Sunrise Multispeciality today.</p>
+        <p>Here is what&apos;s happening at {clinicName} today.</p>
       </div>
 
       {error && <div className="auth-error">{error}</div>}
