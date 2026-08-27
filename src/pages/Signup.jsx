@@ -1,3 +1,4 @@
+import React from "react";
 import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { createClinicUser } from "../services/api";
@@ -80,7 +81,7 @@ export default function Signup({ onLogin, onSignupSuccess }) {
         <div className="auth-brand">
           <div className="brand-logo">+</div>
           <div>
-            <div className="brand-name">ClinicFlow</div>
+            <div className="brand-name">Hola MD</div>
             <div className="auth-brand-sub">Create clinic dashboard access</div>
           </div>
         </div>

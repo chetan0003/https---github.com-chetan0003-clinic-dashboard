@@ -40,7 +40,7 @@ export default function Login({ onSignup }) {
         <div className="auth-brand">
           <div className="brand-logo">+</div>
           <div>
-            <div className="brand-name">ClinicFlow</div>
+            <div className="brand-name">Hola MD</div>
             <div className="auth-brand-sub">Clinic Management Platform</div>
           </div>
         </div>
