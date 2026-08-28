@@ -6,6 +6,7 @@ import { createClinicDoctor, createClinicService, createClinicUser, getClinicApp
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
   appointments: ["Appointments", "Manage and monitor clinic appointments."],
+  queue: ["Appointment Queue", "Keep today's checked-in patients moving."],
   patients: ["Patients", "Patients associated with this clinic."],
   doctors: ["Doctors", "Doctors registered with this clinic."],
   services: ["Services", "Services offered by this clinic."],
@@ -231,6 +232,7 @@ export default function Dashboard() {
 
         <div className="nav-section">Clinic Operations</div>
         <NavButton active={page === "appointments"} onClick={() => go("appointments")} icon="◷">Appointments</NavButton>
+        <NavButton active={page === "queue"} onClick={() => go("queue")} icon="☷">Appointment Queue</NavButton>
         <NavButton active={page === "patients"} onClick={() => go("patients")} icon="♙">Patients</NavButton>
         <NavButton active={page === "doctors"} onClick={() => go("doctors")} icon="♧">Doctors</NavButton>
         <NavButton active={page === "services"} onClick={() => go("services")} icon="▤">Services</NavButton>
@@ -295,6 +297,17 @@ export default function Dashboard() {
               userDoctorId={user?.doctorId || user?.doctor?.id}
               search={search}
               openModal={setModal}
+              showToast={showToast}
+            />
+          )}
+
+          {page === "queue" && (
+            <AppointmentQueue
+              clinicId={selectedClinicId}
+              token={token}
+              userRole={role}
+              userDoctorId={userDoctorId}
+              search={search}
               showToast={showToast}
             />
           )}
@@ -873,6 +886,97 @@ function Patients({ openModal, showToast, clinicId, token }) {
       {filteredPatients.map((patient) => <tr key={patient.id}><td>{patient.id}</td><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: patient.name })}</div><div><strong>{patient.name}</strong><span>Patient</span></div></div></td><td>{patient.phoneNo}</td><td>{patient.clinicId}</td><td><button className="btn btn-light" onClick={() => showToast("Patient profile opened")}>View</button></td></tr>)}
     </tbody></table></div>}
   </div></section>;
+}
+
+function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, showToast }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [waitingAppointments, setWaitingAppointments] = useState([]);
+  const [checkedInAppointments, setCheckedInAppointments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [updatingAppointmentId, setUpdatingAppointmentId] = useState(null);
+  const isDoctor = String(userRole).toUpperCase() === "DOCTOR";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadQueue() {
+      if (!token || !clinicId) {
+        setWaitingAppointments([]);
+        setCheckedInAppointments([]);
+        setLoading(false);
+        setError(!token ? "Please log in to view the appointment queue." : "Please select a clinic.");
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError("");
+        const filters = { from: today, to: today, doctorId: isDoctor ? userDoctorId : "" };
+        const [waitingResult, checkedInResult] = await Promise.all([
+          getClinicAppointments(clinicId, { ...filters, status: "WAITING" }, token),
+          getClinicAppointments(clinicId, { ...filters, status: "CHECKED_IN" }, token),
+        ]);
+        if (!cancelled) {
+          setWaitingAppointments(Array.isArray(waitingResult) ? waitingResult : []);
+          setCheckedInAppointments(Array.isArray(checkedInResult) ? checkedInResult : []);
+        }
+      } catch (err) {
+        if (!cancelled) setError(err.message || "Unable to load appointment queue.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadQueue();
+    return () => { cancelled = true; };
+  }, [clinicId, token, today, isDoctor, userDoctorId]);
+
+  const matchesSearch = (appointment) => {
+    const query = search.trim().toLowerCase();
+    return !query || [appointment.patientName, appointment.serviceName, appointment.doctorName]
+      .some((value) => String(value || "").toLowerCase().includes(query));
+  };
+
+  const visibleWaitingAppointments = waitingAppointments.filter(matchesSearch);
+  const visibleCheckedInAppointments = checkedInAppointments.filter(matchesSearch);
+  const totalInQueue = visibleWaitingAppointments.length + visibleCheckedInAppointments.length;
+
+  async function changeStatus(appointmentId, nextStatus) {
+    try {
+      setUpdatingAppointmentId(appointmentId);
+      setError("");
+      const updated = await updateAppointmentStatus(appointmentId, nextStatus, token);
+      const currentAppointment = [...waitingAppointments, ...checkedInAppointments].find((appointment) => appointment.id === appointmentId);
+      const changedAppointment = { ...currentAppointment, ...(updated || {}), status: updated?.status || nextStatus };
+      setWaitingAppointments((items) => items.filter((appointment) => appointment.id !== appointmentId));
+      setCheckedInAppointments((items) => items.filter((appointment) => appointment.id !== appointmentId));
+      if (changedAppointment.status === "WAITING") setWaitingAppointments((items) => [...items, changedAppointment]);
+      showToast(`Appointment marked ${nextStatus.replaceAll("_", " ").toLowerCase()}`);
+    } catch (err) {
+      setError(err.message || "Unable to update appointment status.");
+    } finally {
+      setUpdatingAppointmentId(null);
+    }
+  }
+
+  return <section className="page active queue-page">
+    <div className="queue-hero"><div><span className="queue-eyebrow">LIVE CLINIC FLOW</span><h2>Today&apos;s Appointment Queue</h2><p>Patients currently checked in or waiting for care.</p></div><div className="queue-count"><strong>{totalInQueue}</strong><span>in queue</span></div></div>
+    {error && <div className="auth-error">{error}</div>}
+    {loading && <div className="card queue-empty"><span className="queue-pulse" /><p>Loading the queue...</p></div>}
+    {!loading && !error && totalInQueue === 0 && <div className="card queue-empty"><div className="queue-empty-icon">✓</div><h3>Queue is clear</h3><p>No checked-in or waiting patients need attention right now.</p></div>}
+    {!loading && !error && totalInQueue > 0 && <div className="queue-columns"><QueueLane title="Waiting" subtitle="Ready for the doctor" appointments={visibleWaitingAppointments} actionLabel="Start Consultation" nextStatus="IN_PROGRESS" updatingAppointmentId={updatingAppointmentId} onStatusChange={changeStatus} /><QueueLane title="Checked In" subtitle="Recently arrived" appointments={visibleCheckedInAppointments} actionLabel="Mark Waiting" nextStatus="WAITING" updatingAppointmentId={updatingAppointmentId} onStatusChange={changeStatus} /></div>}
+  </section>;
+}
+
+function QueueLane({ title, subtitle, appointments, actionLabel, nextStatus, updatingAppointmentId, onStatusChange }) {
+  return <div className="queue-lane"><div className="queue-lane-header"><div><h3>{title}</h3><p>{subtitle}</p></div><span>{appointments.length}</span></div>{appointments.length === 0 ? <div className="lane-empty">No patients</div> : <div className="queue-list">{appointments.map((appointment, index) => <div className="queue-item" key={appointment.id}>
+    <div className="queue-position">{String(index + 1).padStart(2, "0")}</div>
+    <div className="queue-patient"><div className="queue-avatar">{initials({ firstName: appointment.patientName })}</div><div><h3>{appointment.patientName || "Unknown patient"}</h3><p>{appointment.serviceName || appointment.service?.name || "Consultation"}</p></div></div>
+    <div className="queue-detail"><span>Doctor</span><strong>{appointment.doctorName || appointment.doctor?.name || "-"}</strong></div>
+    <div className="queue-detail"><span>Time</span><strong>{formatTime(appointment.startTime || appointment.time)}</strong></div>
+    <button className="btn btn-primary queue-action" disabled={updatingAppointmentId === appointment.id} onClick={() => onStatusChange(appointment.id, nextStatus)}>{updatingAppointmentId === appointment.id ? "Updating..." : actionLabel}</button>
+  </div>)}</div>}</div>;
 }
 
 function Doctors({ openModal, showToast, clinicId, token, refreshKey, onEdit }) {
