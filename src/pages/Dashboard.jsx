@@ -1,7 +1,7 @@
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { createClinicDoctor, createClinicService, createClinicUser, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getUserClinics, saveClinicProfile, updateClinicProfile } from "../services/api";
+import { createClinicDoctor, createClinicService, createClinicUser, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorServices, getUserClinics, saveClinicProfile, updateClinicDoctor, updateClinicProfile } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
@@ -70,10 +70,13 @@ export default function Dashboard() {
   const [staffLoading, setStaffLoading] = useState(false);
   const [staffError, setStaffError] = useState("");
   const [staffRefreshKey, setStaffRefreshKey] = useState(0);
-  const [doctorForm, setDoctorForm] = useState({ name: "", specialization: "" });
+  const [doctorForm, setDoctorForm] = useState({ name: "", specialization: "", serviceId: "", active: true });
+  const [editingDoctorId, setEditingDoctorId] = useState(null);
   const [doctorLoading, setDoctorLoading] = useState(false);
   const [doctorError, setDoctorError] = useState("");
   const [doctorRefreshKey, setDoctorRefreshKey] = useState(0);
+  const [doctorServices, setDoctorServices] = useState([]);
+  const [doctorServicesLoading, setDoctorServicesLoading] = useState(false);
   const [serviceForm, setServiceForm] = useState({ name: "", durationMinutes: "30", price: "" });
   const [serviceLoading, setServiceLoading] = useState(false);
   const [serviceError, setServiceError] = useState("");
@@ -116,6 +119,45 @@ export default function Dashboard() {
     loadUserClinics();
     return () => { cancelled = true; };
   }, [token, user?.username, role]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setDoctorForm((value) => ({ ...value, serviceId: "" }));
+
+    async function loadDoctorServices() {
+      if (!token || !selectedClinicId) {
+        setDoctorServices([]);
+        return;
+      }
+
+      try {
+        setDoctorServicesLoading(true);
+        const result = await getDoctorServices(selectedClinicId, token);
+        let services = Array.isArray(result) ? result : [];
+        if (services.length === 0) {
+          const clinicServices = await getClinicServices(selectedClinicId, token);
+          services = Array.isArray(clinicServices) ? clinicServices : [];
+        }
+        if (!cancelled) setDoctorServices(services);
+      } catch (err) {
+        try {
+          const clinicServices = await getClinicServices(selectedClinicId, token);
+          if (!cancelled) setDoctorServices(Array.isArray(clinicServices) ? clinicServices : []);
+        } catch (fallbackError) {
+          if (!cancelled) {
+            setDoctorServices([]);
+            setDoctorError(fallbackError.message || err.message || "Unable to load services.");
+          }
+        }
+      } finally {
+        if (!cancelled) setDoctorServicesLoading(false);
+      }
+    }
+
+    loadDoctorServices();
+    return () => { cancelled = true; };
+  }, [selectedClinicId, token]);
 
   function showToast(message) {
     setToast(message);
@@ -228,6 +270,23 @@ export default function Dashboard() {
               clinicId={selectedClinicId}
               token={token}
               refreshKey={doctorRefreshKey}
+              onEdit={(doctor) => {
+                if (!doctor) {
+                  setEditingDoctorId(null);
+                  setDoctorForm({ name: "", specialization: "", serviceId: "", active: true });
+                  setDoctorError("");
+                  return;
+                }
+                setEditingDoctorId(doctor.id);
+                setDoctorForm({
+                  name: doctor.name || "",
+                  specialization: doctor.specialization || "",
+                  serviceId: String(doctor.serviceId || doctor.service?.id || ""),
+                  active: doctor.isActive ?? doctor.active ?? true,
+                });
+                setDoctorError("");
+                setModal("doctor");
+              }}
             />
           )}
 
@@ -282,8 +341,8 @@ export default function Dashboard() {
 
       {modal === "doctor" && (
         <Modal
-          title="Add Doctor"
-          onClose={() => { setModal(null); setDoctorError(""); }}
+          title={editingDoctorId === null ? "Add Doctor" : "Edit Doctor"}
+          onClose={() => { setModal(null); setEditingDoctorId(null); setDoctorError(""); }}
           onSave={async () => {
             setDoctorError("");
             if (!token) {
@@ -294,33 +353,42 @@ export default function Dashboard() {
               setDoctorError("Please select a clinic first.");
               return;
             }
-            if (!doctorForm.name.trim() || !doctorForm.specialization.trim()) {
+            if (!doctorForm.name.trim() || !doctorForm.specialization.trim() || !doctorForm.serviceId) {
               setDoctorError("Please fill all required fields.");
               return;
             }
             try {
               setDoctorLoading(true);
-              await createClinicDoctor(selectedClinicId, {
+              const payload = {
                 name: doctorForm.name.trim(),
                 specialization: doctorForm.specialization.trim(),
-              }, token);
+                serviceId: Number(doctorForm.serviceId),
+              };
+              if (editingDoctorId === null) {
+                await createClinicDoctor(selectedClinicId, payload, token);
+              } else {
+                await updateClinicDoctor(selectedClinicId, editingDoctorId, { ...payload, active: doctorForm.active }, token);
+              }
               setModal(null);
-              setDoctorForm({ name: "", specialization: "" });
+              setEditingDoctorId(null);
+              setDoctorForm({ name: "", specialization: "", serviceId: "", active: true });
               setDoctorRefreshKey((value) => value + 1);
-              showToast("Doctor added successfully");
+              showToast(editingDoctorId === null ? "Doctor added successfully" : "Doctor updated successfully");
             } catch (err) {
               setDoctorError(err.message || "Unable to add doctor.");
             } finally {
               setDoctorLoading(false);
             }
           }}
-          saveLabel={doctorLoading ? "Adding..." : "Add Doctor"}
-          saveDisabled={doctorLoading}
+          saveLabel={doctorLoading ? "Saving..." : editingDoctorId === null ? "Add Doctor" : "Update Doctor"}
+          saveDisabled={doctorLoading || doctorServicesLoading}
         >
           {doctorError && <div className="auth-error">{doctorError}</div>}
           <div className="form-grid">
             <Field label="Doctor Name *" placeholder="Dr ..." value={doctorForm.name} onChange={(e) => setDoctorForm((value) => ({ ...value, name: e.target.value }))} />
             <Field label="Specialization *" placeholder="Dentist / MD / etc." value={doctorForm.specialization} onChange={(e) => setDoctorForm((value) => ({ ...value, specialization: e.target.value }))} />
+            <div className="field"><label>Service *</label><select value={doctorForm.serviceId} onChange={(e) => setDoctorForm((value) => ({ ...value, serviceId: e.target.value }))} disabled={doctorServicesLoading || doctorServices.length === 0}><option value="">{doctorServicesLoading ? "Loading services..." : doctorServices.length === 0 ? "No services available" : "Select service"}</option>{doctorServices.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}</select></div>
+            {editingDoctorId !== null && <div className="field"><label>Status *</label><select value={doctorForm.active ? "true" : "false"} onChange={(e) => setDoctorForm((value) => ({ ...value, active: e.target.value === "true" }))}><option value="true">Active</option><option value="false">Inactive</option></select></div>}
           </div>
         </Modal>
       )}
@@ -722,7 +790,7 @@ function Patients({ openModal, showToast, clinicId, token }) {
   </div></section>;
 }
 
-function Doctors({ openModal, showToast, clinicId, token, refreshKey }) {
+function Doctors({ openModal, showToast, clinicId, token, refreshKey, onEdit }) {
   const [doctors, setDoctors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -755,7 +823,7 @@ function Doctors({ openModal, showToast, clinicId, token, refreshKey }) {
   }, [clinicId, token, refreshKey]);
 
   return <section className="page active"><div className="card">
-    <div className="card-header"><div><h3>Doctors</h3><p>Doctors registered with this clinic</p></div><button className="btn btn-primary" onClick={() => openModal("doctor")}>+ Add Doctor</button></div>
+    <div className="card-header"><div><h3>Doctors</h3><p>Doctors registered with this clinic</p></div><button className="btn btn-primary" onClick={() => { onEdit(null); openModal("doctor"); }}>+ Add Doctor</button></div>
     <div className="card-body">
       {loading && <p className="muted">Loading doctors...</p>}
       {!loading && error && <div className="auth-error">{error}</div>}
@@ -763,7 +831,7 @@ function Doctors({ openModal, showToast, clinicId, token, refreshKey }) {
       {!loading && !error && <div className="grid-3">{doctors.map((doctor) => <div className="card profile-card" key={doctor.id}>
       <div className="doctor-head"><div className="doctor-avatar">{initials({ firstName: doctor.name })}</div><div><div className="doctor-name">{doctor.name}</div><div className="doctor-speciality">{doctor.specialization}</div></div></div>
       <InfoLine left="Status" right={doctor.isActive ? "Active" : "Inactive"} positive={doctor.isActive} />
-      <button className="btn btn-light full-btn" onClick={() => showToast("Doctor profile opened")}>View Profile</button>
+      <div className="quick-actions"><button className="btn btn-light" onClick={() => showToast("Doctor profile opened")}>View Profile</button><button className="btn btn-outline" onClick={() => onEdit(doctor)}>Edit</button></div>
     </div>)}</div>}
     </div>
   </div></section>;

@@ -69,6 +69,24 @@ export function createClinicDoctor(clinicId, payload, token) {
   });
 }
 
+export function updateClinicDoctor(clinicId, doctorId, payload, token) {
+  return request(`/api/dashboard/clinics/${clinicId}/doctors/${doctorId}`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getDoctorServices(clinicId, token) {
+  return request(`/api/n8n/clinics/${clinicId}/services`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
+
 export function getClinicServices(clinicId, token) {
   return request(`/api/dashboard/clinics/${clinicId}/services`, {
     headers: {
