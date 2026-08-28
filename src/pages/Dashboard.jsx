@@ -1,7 +1,7 @@
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { createClinicDoctor, createClinicService, createClinicUser, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorServices, getUserClinics, saveClinicProfile, updateClinicDoctor, updateClinicProfile } from "../services/api";
+import { createClinicDoctor, createClinicService, createClinicUser, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorServices, getUserClinics, saveClinicProfile, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
@@ -70,6 +70,8 @@ export default function Dashboard() {
   const [staffLoading, setStaffLoading] = useState(false);
   const [staffError, setStaffError] = useState("");
   const [staffRefreshKey, setStaffRefreshKey] = useState(0);
+  const [staffDoctors, setStaffDoctors] = useState([]);
+  const [staffDoctorsLoading, setStaffDoctorsLoading] = useState(false);
   const [doctorForm, setDoctorForm] = useState({ name: "", specialization: "", serviceId: "", active: true });
   const [editingDoctorId, setEditingDoctorId] = useState(null);
   const [doctorLoading, setDoctorLoading] = useState(false);
@@ -83,6 +85,8 @@ export default function Dashboard() {
   const [serviceRefreshKey, setServiceRefreshKey] = useState(0);
   const [clinics, setClinics] = useState([]);
   const [selectedClinicId, setSelectedClinicId] = useState(user?.clinicId || "");
+  const [userDoctorId, setUserDoctorId] = useState(user?.doctorId || user?.doctor?.id || "");
+  const [clinicsLoading, setClinicsLoading] = useState(true);
 
   const displayName =
     `${user?.firstName || ""} ${user?.lastName || ""}`.trim() ||
@@ -91,7 +95,8 @@ export default function Dashboard() {
   const role = user?.role || "CLINIC ADMIN";
   const avatar = initials(user);
   const canManageStaff = ["SUPER_ADMIN", "CLINIC_ADMIN"].includes(String(role).toUpperCase());
-  const canManageSettings = String(role).toUpperCase() === "SUPER_ADMIN";
+  const canManageSettings = ["SUPER_ADMIN", "CLINIC_ADMIN"].includes(String(role).toUpperCase());
+  const canViewClinicProfile = String(role).toUpperCase() === "SUPER_ADMIN";
   const isSuperAdmin = String(role).toUpperCase() === "SUPER_ADMIN";
   const selectedClinicName = clinics.find((clinic) => String(clinic.id) === String(selectedClinicId))?.name || "your clinic";
 
@@ -99,11 +104,16 @@ export default function Dashboard() {
     let cancelled = false;
 
     async function loadUserClinics() {
-      if (!token || !user?.username) return;
+      if (!token || !user?.username) {
+        setClinicsLoading(false);
+        return;
+      }
 
       try {
+        setClinicsLoading(true);
         const result = await getUserClinics(user.username, token);
         const userClinics = Array.isArray(result?.clinic) ? result.clinic : [];
+        if (!cancelled) setUserDoctorId(result?.doctorId || user?.doctorId || user?.doctor?.id || "");
         const availableClinics = String(role).toUpperCase() === "SUPER_ADMIN" ? userClinics : userClinics.slice(0, 1);
         if (!cancelled) {
           setClinics(availableClinics);
@@ -113,6 +123,8 @@ export default function Dashboard() {
         }
       } catch (err) {
         if (!cancelled) showToast(err.message || "Unable to load clinics.");
+      } finally {
+        if (!cancelled) setClinicsLoading(false);
       }
     }
 
@@ -156,6 +168,33 @@ export default function Dashboard() {
     }
 
     loadDoctorServices();
+    return () => { cancelled = true; };
+  }, [selectedClinicId, token]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadStaffDoctors() {
+      if (!token || !selectedClinicId) {
+        setStaffDoctors([]);
+        return;
+      }
+
+      try {
+        setStaffDoctorsLoading(true);
+        const result = await getClinicDoctors(selectedClinicId, token);
+        if (!cancelled) setStaffDoctors(Array.isArray(result) ? result : []);
+      } catch (err) {
+        if (!cancelled) {
+          setStaffDoctors([]);
+          setStaffError(err.message || "Unable to load doctors.");
+        }
+      } finally {
+        if (!cancelled) setStaffDoctorsLoading(false);
+      }
+    }
+
+    loadStaffDoctors();
     return () => { cancelled = true; };
   }, [selectedClinicId, token]);
 
@@ -243,6 +282,7 @@ export default function Dashboard() {
         </header>
 
         <div className="content">
+          {clinicsLoading ? <PageLoader /> : <>
           {page === "dashboard" && (
             <DashboardHome go={go} openModal={setModal} clinicId={selectedClinicId} clinicName={selectedClinicName} token={token} />
           )}
@@ -296,6 +336,7 @@ export default function Dashboard() {
               showToast={showToast}
               clinicId={selectedClinicId}
               token={token}
+              doctorId={String(role).toUpperCase() === "DOCTOR" ? userDoctorId : ""}
               refreshKey={serviceRefreshKey}
             />
           )}
@@ -311,7 +352,8 @@ export default function Dashboard() {
 
           {page === "reports" && <Reports showToast={showToast} />}
 
-          {page === "settings" && canManageSettings && <Settings showToast={showToast} clinicId={selectedClinicId} token={token} />}
+          {page === "settings" && canManageSettings && <Settings showToast={showToast} clinicId={selectedClinicId} token={token} canViewClinicProfile={canViewClinicProfile} />}
+          </>}
         </div>
       </main>
 
@@ -456,9 +498,9 @@ export default function Dashboard() {
               setStaffError("A clinic-admin login token is required.");
               return;
             }
-            const clinicId = isSuperAdmin ? staffForm.clinicId : selectedClinicId;
+            const clinicId = selectedClinicId;
             const required = ["username", "email", "password", "firstName", "lastName", "phone"];
-            if (required.some((key) => !String(staffForm[key]).trim()) || !String(clinicId).trim()) {
+            if (required.some((key) => !String(staffForm[key]).trim()) || !String(clinicId).trim() || (staffForm.role === "DOCTOR" && !staffForm.doctorId)) {
               setStaffError("Please fill all required fields.");
               return;
             }
@@ -476,7 +518,7 @@ export default function Dashboard() {
                 phone: staffForm.phone.trim(),
                 role: roleToCreate,
                 clinicId: Number(clinicId),
-                doctorId: staffForm.doctorId ? Number(staffForm.doctorId) : null
+                doctorId: staffForm.role === "DOCTOR" ? Number(staffForm.doctorId) : null
               }, token);
               setModal(null);
               setStaffForm({ username:"", email:"", password:"", firstName:"", lastName:"", phone:"", role:"STAFF", clinicId:String(user?.clinicId || 1), doctorId:"" });
@@ -489,7 +531,7 @@ export default function Dashboard() {
             }
           }}
           saveLabel={staffLoading ? "Creating..." : "Create User"}
-          saveDisabled={staffLoading}
+          saveDisabled={staffLoading || (staffForm.role === "DOCTOR" && staffDoctorsLoading)}
         >
           {staffError && <div className="auth-error">{staffError}</div>}
           <div className="form-grid">
@@ -499,9 +541,9 @@ export default function Dashboard() {
             <Field label="Phone *" value={staffForm.phone} onChange={(e) => setStaffForm(v => ({...v, phone:e.target.value}))} placeholder="+91..." />
             <Field label="First Name *" value={staffForm.firstName} onChange={(e) => setStaffForm(v => ({...v, firstName:e.target.value}))} />
             <Field label="Last Name *" value={staffForm.lastName} onChange={(e) => setStaffForm(v => ({...v, lastName:e.target.value}))} />
-            <div className="field"><label>Role *</label><select value={staffForm.role} onChange={(e) => setStaffForm(v => ({...v, role:e.target.value}))}><option>STAFF</option><option>DOCTOR</option>{isSuperAdmin && <option>CLINIC_ADMIN</option>}</select></div>
-            <Field label="Clinic ID *" type="number" min="1" value={isSuperAdmin ? staffForm.clinicId : selectedClinicId} onChange={isSuperAdmin ? (e) => setStaffForm(v => ({...v, clinicId:e.target.value})) : undefined} disabled={!isSuperAdmin} />
-            <Field label="Doctor ID" type="number" min="1" value={staffForm.doctorId} onChange={(e) => setStaffForm(v => ({...v, doctorId:e.target.value}))} placeholder="Optional" />
+            <div className="field"><label>Role *</label><select value={staffForm.role} onChange={(e) => setStaffForm(v => ({...v, role:e.target.value, doctorId: e.target.value === "DOCTOR" ? v.doctorId : ""}))}><option>STAFF</option><option>DOCTOR</option>{isSuperAdmin && <option>CLINIC_ADMIN</option>}</select></div>
+            <Field label="Clinic ID *" type="number" min="1" value={selectedClinicId} disabled />
+            {staffForm.role === "DOCTOR" && <div className="field"><label>Doctor *</label><select value={staffForm.doctorId} onChange={(e) => setStaffForm(v => ({ ...v, doctorId: e.target.value }))} disabled={staffDoctorsLoading || staffDoctors.length === 0}><option value="">{staffDoctorsLoading ? "Loading doctors..." : staffDoctors.length === 0 ? "No doctors available" : "Select doctor"}</option>{staffDoctors.map((doctor) => <option key={doctor.id} value={doctor.id}>{doctor.name}</option>)}</select></div>}
           </div>
         </Modal>
       )}
@@ -532,6 +574,10 @@ function Field({ label, select, options = [], ...props }) {
       )}
     </div>
   );
+}
+
+function PageLoader() {
+  return <div className="page-loader" role="status" aria-label="Loading dashboard"><div className="loader-spinner" /><span>Loading your clinic...</span></div>;
 }
 
 function DashboardHome({ go, openModal, clinicId, clinicName, token }) {
@@ -837,7 +883,7 @@ function Doctors({ openModal, showToast, clinicId, token, refreshKey, onEdit }) 
   </div></section>;
 }
 
-function Services({ openModal, showToast, clinicId, token, refreshKey }) {
+function Services({ openModal, showToast, clinicId, token, doctorId, refreshKey }) {
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -856,7 +902,7 @@ function Services({ openModal, showToast, clinicId, token, refreshKey }) {
       try {
         setLoading(true);
         setError("");
-        const result = await getClinicServices(clinicId, token);
+        const result = await getClinicServices(clinicId, token, String(doctorId || ""));
         if (!cancelled) setServices(Array.isArray(result) ? result : []);
       } catch (err) {
         if (!cancelled) setError(err.message || "Unable to load services.");
@@ -867,7 +913,7 @@ function Services({ openModal, showToast, clinicId, token, refreshKey }) {
 
     loadServices();
     return () => { cancelled = true; };
-  }, [clinicId, token, refreshKey]);
+  }, [clinicId, token, doctorId, refreshKey]);
 
   return <section className="page active"><div className="card">
     <div className="card-header"><div><h3>Services</h3><p>Services offered by this clinic</p></div><button className="btn btn-primary" onClick={() => openModal("service")}>+ Add Service</button></div>
@@ -938,7 +984,7 @@ function Reports({ showToast }) {
   </section>;
 }
 
-function Settings({ showToast, clinicId, token }) {
+function Settings({ showToast, clinicId, token, canViewClinicProfile }) {
   const [form, setForm] = useState({
     name: "Sunrise Multispeciality",
     whatsappNumber: "+91 98765 43210",
@@ -949,6 +995,16 @@ function Settings({ showToast, clinicId, token }) {
   const [clinics, setClinics] = useState([]);
   const [loadingClinics, setLoadingClinics] = useState(true);
   const [editingClinicId, setEditingClinicId] = useState(null);
+  const [workingHoursSaving, setWorkingHoursSaving] = useState(false);
+  const [workingHours, setWorkingHours] = useState([
+    { day: "MONDAY", active: true, start: "09:00", end: "19:00", breakStart: "13:00", breakEnd: "14:00" },
+    { day: "TUESDAY", active: true, start: "09:00", end: "19:00", breakStart: "13:00", breakEnd: "14:00" },
+    { day: "WEDNESDAY", active: true, start: "09:00", end: "19:00", breakStart: "13:00", breakEnd: "14:00" },
+    { day: "THURSDAY", active: true, start: "09:00", end: "19:00", breakStart: "13:00", breakEnd: "14:00" },
+    { day: "FRIDAY", active: true, start: "09:00", end: "19:00", breakStart: "13:00", breakEnd: "14:00" },
+    { day: "SATURDAY", active: true, start: "09:00", end: "19:00", breakStart: "13:00", breakEnd: "14:00" },
+    { day: "SUNDAY", active: false, start: "09:00", end: "19:00", breakStart: "13:00", breakEnd: "14:00" },
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -964,7 +1020,11 @@ function Settings({ showToast, clinicId, token }) {
       try {
         setLoadingClinics(true);
         const result = await getClinicProfiles(token);
-        if (!cancelled) setClinics(Array.isArray(result) ? result : []);
+        const profiles = Array.isArray(result) ? result : [];
+        const visibleProfiles = canViewClinicProfile
+          ? profiles
+          : profiles.filter((clinic) => String(clinic.id) === String(clinicId));
+        if (!cancelled) setClinics(visibleProfiles);
       } catch (err) {
         if (!cancelled) setError(err.message || "Unable to load clinic profiles.");
       } finally {
@@ -974,7 +1034,7 @@ function Settings({ showToast, clinicId, token }) {
 
     loadClinics();
     return () => { cancelled = true; };
-  }, [token]);
+  }, [token, canViewClinicProfile]);
 
   async function handleSave() {
     if (!token) {
@@ -988,6 +1048,7 @@ function Settings({ showToast, clinicId, token }) {
     }
 
     try {
+      if (!canViewClinicProfile) return;
       setSaving(true);
       setError("");
       const payload = {
@@ -1028,9 +1089,10 @@ function Settings({ showToast, clinicId, token }) {
   }
 
   return <section className="page active"><div className="card"><div className="settings-grid">
-    <div className="settings-nav"><button className="active">Clinic Profile</button><button>Appointment Settings</button><button>WhatsApp / AI</button><button>Notifications</button><button>Security</button></div>
-    <div className="settings-main"><h3>Clinic Profile</h3><p className="muted">Basic information displayed across your clinic dashboard.</p>
+    <div className="settings-nav">{canViewClinicProfile && <button className="active">Clinic Profile</button>}<button>Appointment Settings</button><button>WhatsApp / AI</button><button>Notifications</button><button>Security</button></div>
+    <div className="settings-main">
       {error && <div className="auth-error">{error}</div>}
+      {canViewClinicProfile && <><h3>Clinic Profile</h3><p className="muted">Basic information displayed across your clinic dashboard.</p>
       {editingClinicId !== null && <div className="auth-warning">Editing clinic #{editingClinicId}</div>}
       <div className="form-grid mt">
         <Field label="Clinic Name" value={form.name} onChange={(e) => setForm((value) => ({ ...value, name: e.target.value }))} />
@@ -1042,14 +1104,52 @@ function Settings({ showToast, clinicId, token }) {
         <button className="btn btn-primary" onClick={handleSave} disabled={saving}>{saving ? "Saving..." : editingClinicId === null ? "Save Changes" : "Update Clinic"}</button>
         {editingClinicId !== null && <button className="btn btn-outline" onClick={cancelEdit} disabled={saving}>Cancel Edit</button>}
       </div>
+      </>}
       <div className="mt">
         <h3>Saved Clinic Profiles</h3>
         {loadingClinics && <p className="muted">Loading clinic profiles...</p>}
         {!loadingClinics && clinics.length === 0 && <p className="muted">No clinic profiles found.</p>}
-        {!loadingClinics && clinics.length > 0 && <div className="table-wrap"><table><thead><tr><th>ID</th><th>Clinic Name</th><th>WhatsApp Number</th><th>Timezone</th><th>Status</th><th>Created</th><th>Action</th></tr></thead><tbody>
-          {clinics.map((clinic) => <tr key={clinic.id}><td>{clinic.id}</td><td><strong>{clinic.name}</strong></td><td>{clinic.whatsappNumber}</td><td>{clinic.timezone}</td><td><span className={`status ${clinic.active ? "confirmed" : "cancelled"}`}>{clinic.active ? "ACTIVE" : "INACTIVE"}</span></td><td>{clinic.createdAt ? new Date(clinic.createdAt).toLocaleDateString() : "-"}</td><td><button className="btn btn-light" onClick={() => editClinic(clinic)}>Edit</button></td></tr>)}
+        {!loadingClinics && clinics.length > 0 && <div className="table-wrap"><table><thead><tr><th>ID</th><th>Clinic Name</th><th>WhatsApp Number</th><th>Timezone</th><th>Status</th><th>Created</th>{canViewClinicProfile && <th>Action</th>}</tr></thead><tbody>
+          {clinics.map((clinic) => <tr key={clinic.id}><td>{clinic.id}</td><td><strong>{clinic.name}</strong></td><td>{clinic.whatsappNumber}</td><td>{clinic.timezone}</td><td><span className={`status ${clinic.active ? "confirmed" : "cancelled"}`}>{clinic.active ? "ACTIVE" : "INACTIVE"}</span></td><td>{clinic.createdAt ? new Date(clinic.createdAt).toLocaleDateString() : "-"}</td>{canViewClinicProfile && <td><button className="btn btn-light" onClick={() => editClinic(clinic)}>Edit</button></td>}</tr>)}
         </tbody></table></div>}
       </div>
-    </div>
-  </div></div></section>;
+      <div className="working-hours mt">
+        <h3>Working Hours</h3>
+        <p className="muted">Set the clinic schedule and daily break times.</p>
+        <div className="working-hours-list">
+          {workingHours.map((hours, index) => <div className={`working-hour-row ${hours.active ? "" : "disabled"}`} key={hours.day}>
+            <label className="day-toggle"><input type="checkbox" checked={hours.active} onChange={(e) => setWorkingHours((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, active: e.target.checked } : item))} /><strong>{hours.day}</strong></label>
+            <div className="working-time"><label>Open<input type="time" value={hours.start} disabled={!hours.active} onChange={(e) => setWorkingHours((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, start: e.target.value } : item))} /></label><span>to</span><label>Close<input type="time" value={hours.end} disabled={!hours.active} onChange={(e) => setWorkingHours((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, end: e.target.value } : item))} /></label></div>
+            <div className="working-time"><label>Break from<input type="time" value={hours.breakStart} disabled={!hours.active} onChange={(e) => setWorkingHours((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, breakStart: e.target.value } : item))} /></label><span>to</span><label>Break to<input type="time" value={hours.breakEnd} disabled={!hours.active} onChange={(e) => setWorkingHours((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, breakEnd: e.target.value } : item))} /></label></div>
+          </div>)}
+        </div>
+        <button className="btn btn-primary mt" onClick={async () => {
+          if (!token) {
+            setError("A clinic-admin login token is required.");
+            return;
+          }
+          if (!clinicId) {
+            setError("Please select a clinic first.");
+            return;
+          }
+          try {
+            setWorkingHoursSaving(true);
+            setError("");
+            await upsertClinicWorkingHours(clinicId, workingHours.map((hours) => ({
+              dayOfWeek: hours.day,
+              startTime: hours.start,
+              endTime: hours.end,
+              breakStartTime: hours.breakStart,
+              breakEndTime: hours.breakEnd,
+              active: hours.active,
+            })), token);
+            showToast("Working hours saved successfully");
+          } catch (err) {
+            setError(err.message || "Unable to save working hours.");
+          } finally {
+            setWorkingHoursSaving(false);
+          }
+        }} disabled={workingHoursSaving}>{workingHoursSaving ? "Saving..." : "Save Working Hours"}</button>
+      </div>
+  </div></div></div></section>;
 }

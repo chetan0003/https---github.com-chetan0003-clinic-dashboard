@@ -87,8 +87,9 @@ export function getDoctorServices(clinicId, token) {
   });
 }
 
-export function getClinicServices(clinicId, token) {
-  return request(`/api/dashboard/clinics/${clinicId}/services`, {
+export function getClinicServices(clinicId, token, doctorId) {
+  const query = doctorId ? `?doctorId=${encodeURIComponent(doctorId)}` : "";
+  return request(`/api/dashboard/clinics/${clinicId}/services${query}`, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -173,6 +174,16 @@ export function saveClinicProfile(payload, token) {
 export function updateClinicProfile(clinicId, payload, token) {
   return request(`/api/dashboard/clinics/${clinicId}`, {
     method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function upsertClinicWorkingHours(clinicId, payload, token) {
+  return request(`/api/dashboard/clinics/${clinicId}/working-hours`, {
+    method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
     },
