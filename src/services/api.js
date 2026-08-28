@@ -161,6 +161,16 @@ export function getClinicAppointments(clinicId, filters, token) {
   });
 }
 
+export function updateAppointmentStatus(appointmentId, status, token) {
+  return request(`/api/dashboard/appointments/${appointmentId}/status`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ status }),
+  });
+}
+
 export function saveClinicProfile(payload, token) {
   return request("/api/dashboard/clinics", {
     method: "POST",

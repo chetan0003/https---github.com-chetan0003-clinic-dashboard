@@ -1,7 +1,7 @@
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { createClinicDoctor, createClinicService, createClinicUser, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorServices, getUserClinics, saveClinicProfile, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
+import { createClinicDoctor, createClinicService, createClinicUser, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorServices, getUserClinics, saveClinicProfile, updateAppointmentStatus, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
@@ -720,6 +720,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [updatingAppointmentId, setUpdatingAppointmentId] = useState(null);
   const isDoctor = String(userRole).toUpperCase() === "DOCTOR";
 
   useEffect(() => {
@@ -765,6 +766,44 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
       .some((value) => String(value || "").toLowerCase().includes(query));
   });
 
+  async function handleStatusUpdate(appointmentId, nextStatus) {
+    if (!token) {
+      setError("Please log in to update appointments.");
+      return;
+    }
+
+    try {
+      setUpdatingAppointmentId(appointmentId);
+      setError("");
+      const updatedAppointment = await updateAppointmentStatus(appointmentId, nextStatus, token);
+      setRows((items) => items.map((appointment) => appointment.id === appointmentId
+        ? { ...appointment, ...(updatedAppointment || {}), status: updatedAppointment?.status || nextStatus }
+        : appointment));
+      showToast(`Appointment marked ${nextStatus.replaceAll("_", " ").toLowerCase()}`);
+    } catch (err) {
+      setError(err.message || "Unable to update appointment status.");
+    } finally {
+      setUpdatingAppointmentId(null);
+    }
+  }
+
+  function getAppointmentAction(appointment) {
+    const appointmentStatus = String(appointment.status || "").toUpperCase();
+    if (appointmentStatus === "CONFIRMED") {
+      return { label: "Check In", nextStatus: "CHECKED_IN" };
+    }
+    if (appointmentStatus === "CHECKED_IN") {
+      return { label: "Mark Waiting", nextStatus: "WAITING" };
+    }
+    if (appointmentStatus === "WAITING") {
+      return { label: "Start Consultation", nextStatus: "IN_PROGRESS" };
+    }
+    if (appointmentStatus === "IN_PROGRESS") {
+      return { label: "Mark Completed", nextStatus: "COMPLETED" };
+    }
+    return null;
+  }
+
   return <section className="page active"><div className="card">
     <div className="card-header"><div><h3>Appointments</h3><p>Manage and monitor clinic appointments</p></div><button className="btn btn-primary" onClick={() => openModal("appointment")}>+ New Appointment</button></div>
     <div className="filters">
@@ -778,7 +817,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
     {loading && <div className="card-body"><p className="muted">Loading appointments...</p></div>}
     {!loading && !error && filteredRows.length === 0 && <div className="card-body"><p className="muted">No appointments found.</p></div>}
     {!loading && !error && filteredRows.length > 0 && <div className="table-wrap"><table><thead><tr><th>Patient</th><th>Service</th><th>Doctor</th><th>Date</th><th>Time</th><th>Status</th><th>Action</th></tr></thead><tbody>
-      {filteredRows.map((appointment) => <tr key={appointment.id}><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "-"}</strong><span>{appointment.phoneNo || appointment.patientPhone || "-"}</span></div></div></td><td>{appointment.serviceName || appointment.service?.name || "-"}</td><td>{appointment.doctorName || appointment.doctor?.name || "-"}</td><td>{appointment.appointmentDate || appointment.date || "-"}</td><td>{formatTime(appointment.startTime || appointment.time)}</td><td><span className={`status ${String(appointment.status || "").toLowerCase()}`}>{appointment.status || "-"}</span></td><td><button className="btn btn-light" onClick={() => showToast("Appointment details opened")}>View</button></td></tr>)}
+      {filteredRows.map((appointment) => { const action = getAppointmentAction(appointment); const isUpdating = updatingAppointmentId === appointment.id; return <tr key={appointment.id}><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "-"}</strong><span>{appointment.phoneNo || appointment.patientPhone || "-"}</span></div></div></td><td>{appointment.serviceName || appointment.service?.name || "-"}</td><td>{appointment.doctorName || appointment.doctor?.name || "-"}</td><td>{appointment.appointmentDate || appointment.date || "-"}</td><td>{formatTime(appointment.startTime || appointment.time)}</td><td><span className={`status ${String(appointment.status || "").toLowerCase()}`}>{appointment.status || "-"}</span></td><td>{action && <button className="btn btn-light" disabled={isUpdating} onClick={() => handleStatusUpdate(appointment.id, action.nextStatus)}>{isUpdating ? "Updating..." : action.label}</button>}</td></tr>; })}
     </tbody></table></div>}
     {!loading && !error && <div className="pagination"><span>Showing {filteredRows.length} appointments</span></div>}
   </div></section>;
