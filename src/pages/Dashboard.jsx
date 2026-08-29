@@ -1,7 +1,7 @@
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { createClinicDoctor, createClinicService, createClinicUser, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorServices, getUserClinics, saveClinicProfile, updateAppointmentStatus, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
+import { cancelAppointment, createClinicDoctor, createClinicService, createClinicUser, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicHolidays, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorServices, getUserClinics, saveClinicProfile, updateAppointmentStatus, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
@@ -597,6 +597,8 @@ function DashboardHome({ go, openModal, clinicId, clinicName, token }) {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [holidays, setHolidays] = useState([]);
+  const [holidaysLoading, setHolidaysLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -622,6 +624,38 @@ function DashboardHome({ go, openModal, clinicId, clinicName, token }) {
     }
 
     loadDashboard();
+    return () => { cancelled = true; };
+  }, [clinicId, token]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadHolidays() {
+      if (!token || !clinicId) {
+        setHolidays([]);
+        setHolidaysLoading(false);
+        return;
+      }
+
+      try {
+        setHolidaysLoading(true);
+        const result = await getClinicHolidays(clinicId, token);
+        const holidayList = Array.isArray(result)
+          ? result
+          : Array.isArray(result?.data)
+            ? result.data
+            : Array.isArray(result?.content)
+              ? result.content
+              : [];
+        if (!cancelled) setHolidays(holidayList);
+      } catch (err) {
+        if (!cancelled) setHolidays([]);
+      } finally {
+        if (!cancelled) setHolidaysLoading(false);
+      }
+    }
+
+    loadHolidays();
     return () => { cancelled = true; };
   }, [clinicId, token]);
 
@@ -690,11 +724,31 @@ function DashboardHome({ go, openModal, clinicId, clinicName, token }) {
           <InfoLine left="Health Consultation" right="96" />
           <InfoLine left="Teeth Cleaning" right="71" />
         </QuickCard>
-        <QuickCard title="Doctor Availability" subtitle="Today">
-          <InfoLine left="Available" right="6 doctors" positive />
-          <InfoLine left="On leave" right="1 doctor" />
-          <InfoLine left="Total" right="7 doctors" />
-        </QuickCard>
+        <div className="card">
+          <div className="card-header"><div><h3>Clinic Holidays</h3><p>Upcoming clinic closures</p></div></div>
+          <div className="card-body">
+            <div className="holiday-list">
+              {holidaysLoading && <p className="muted">Loading clinic holidays...</p>}
+              {!holidaysLoading && holidays.filter((holiday) => holiday.active !== false).length === 0 && <p className="muted">No active clinic holidays.</p>}
+              {!holidaysLoading && holidays.filter((holiday) => holiday.active !== false).map((holiday) => {
+                const holidayDate = holiday.holiday_date || holiday.date || holiday.holidayDate;
+                const dateObj = holidayDate ? new Date(`${holidayDate}T00:00:00`) : new Date();
+                return (
+                  <div className="holiday-row" key={holiday.id || `${holidayDate}-${holiday.name}`}>
+                    <div className="holiday-date-box">
+                      <span>{dateObj.toLocaleDateString("en-GB", { day: "2-digit" })}</span>
+                      <small>{dateObj.toLocaleDateString("en-GB", { month: "short" })}</small>
+                    </div>
+                    <div className="holiday-info">
+                      <strong>{holiday.name}</strong>
+                      <span>{dateObj.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -734,6 +788,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [updatingAppointmentId, setUpdatingAppointmentId] = useState(null);
+  const [cancelingAppointmentId, setCancelingAppointmentId] = useState(null);
   const isDoctor = String(userRole).toUpperCase() === "DOCTOR";
 
   useEffect(() => {
@@ -800,6 +855,27 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
     }
   }
 
+  async function handleCancelAppointment(appointmentId) {
+    if (!token) {
+      setError("Please log in to cancel appointments.");
+      return;
+    }
+
+    try {
+      setCancelingAppointmentId(appointmentId);
+      setError("");
+      const updatedAppointment = await cancelAppointment(appointmentId, token);
+      setRows((items) => items.map((appointment) => appointment.id === appointmentId
+        ? { ...appointment, ...(updatedAppointment || {}), status: updatedAppointment?.status || "CANCELLED" }
+        : appointment));
+      showToast("Appointment cancelled");
+    } catch (err) {
+      setError(err.message || "Unable to cancel appointment.");
+    } finally {
+      setCancelingAppointmentId(null);
+    }
+  }
+
   function getAppointmentAction(appointment) {
     const appointmentStatus = String(appointment.status || "").toUpperCase();
     if (appointmentStatus === "CONFIRMED") {
@@ -817,6 +893,8 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
     return null;
   }
 
+  const canCancelAppointment = (appointment) => String(appointment.status || "").toUpperCase() !== "CANCELLED";
+
   return <section className="page active"><div className="card">
     <div className="card-header"><div><h3>Appointments</h3><p>Manage and monitor clinic appointments</p></div><button className="btn btn-primary" onClick={() => openModal("appointment")}>+ New Appointment</button></div>
     <div className="filters">
@@ -830,7 +908,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
     {loading && <div className="card-body"><p className="muted">Loading appointments...</p></div>}
     {!loading && !error && filteredRows.length === 0 && <div className="card-body"><p className="muted">No appointments found.</p></div>}
     {!loading && !error && filteredRows.length > 0 && <div className="table-wrap"><table><thead><tr><th>Patient</th><th>Service</th><th>Doctor</th><th>Date</th><th>Time</th><th>Status</th><th>Action</th></tr></thead><tbody>
-      {filteredRows.map((appointment) => { const action = getAppointmentAction(appointment); const isUpdating = updatingAppointmentId === appointment.id; return <tr key={appointment.id}><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "-"}</strong><span>{appointment.phoneNo || appointment.patientPhone || "-"}</span></div></div></td><td>{appointment.serviceName || appointment.service?.name || "-"}</td><td>{appointment.doctorName || appointment.doctor?.name || "-"}</td><td>{appointment.appointmentDate || appointment.date || "-"}</td><td>{formatTime(appointment.startTime || appointment.time)}</td><td><span className={`status ${String(appointment.status || "").toLowerCase()}`}>{appointment.status || "-"}</span></td><td>{action && <button className="btn btn-light" disabled={isUpdating} onClick={() => handleStatusUpdate(appointment.id, action.nextStatus)}>{isUpdating ? "Updating..." : action.label}</button>}</td></tr>; })}
+      {filteredRows.map((appointment) => { const action = getAppointmentAction(appointment); const isUpdating = updatingAppointmentId === appointment.id; const isCancelling = cancelingAppointmentId === appointment.id; return <tr key={appointment.id}><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "-"}</strong><span>{appointment.phoneNo || appointment.patientPhone || "-"}</span></div></div></td><td>{appointment.serviceName || appointment.service?.name || "-"}</td><td>{appointment.doctorName || appointment.doctor?.name || "-"}</td><td>{appointment.appointmentDate || appointment.date || "-"}</td><td>{formatTime(appointment.startTime || appointment.time)}</td><td><span className={`status ${String(appointment.status || "").toLowerCase()}`}>{appointment.status || "-"}</span></td><td><div className="row-actions">{action && <button className="btn btn-light" disabled={isUpdating} onClick={() => handleStatusUpdate(appointment.id, action.nextStatus)}>{isUpdating ? "Updating..." : action.label}</button>}{canCancelAppointment(appointment) && <button className="btn btn-danger" disabled={isCancelling} onClick={() => handleCancelAppointment(appointment.id)}>{isCancelling ? "Cancelling..." : "Cancel"}</button>}</div></td></tr>; })}
     </tbody></table></div>}
     {!loading && !error && <div className="pagination"><span>Showing {filteredRows.length} appointments</span></div>}
   </div></section>;
@@ -895,6 +973,7 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [updatingAppointmentId, setUpdatingAppointmentId] = useState(null);
+  const [draggedWaitingAppointmentId, setDraggedWaitingAppointmentId] = useState(null);
   const isDoctor = String(userRole).toUpperCase() === "DOCTOR";
 
   useEffect(() => {
@@ -942,6 +1021,23 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
   const visibleCheckedInAppointments = checkedInAppointments.filter(matchesSearch);
   const totalInQueue = visibleWaitingAppointments.length + visibleCheckedInAppointments.length;
 
+  function reorderWaitingAppointments(draggedId, targetId) {
+    if (!draggedId || !targetId || String(draggedId) === String(targetId)) return;
+
+    setWaitingAppointments((items) => {
+      const sourceIndex = items.findIndex((appointment) => String(appointment.id) === String(draggedId));
+      const targetIndex = items.findIndex((appointment) => String(appointment.id) === String(targetId));
+      if (sourceIndex < 0 || targetIndex < 0) return items;
+
+      const reordered = [...items];
+      const [moved] = reordered.splice(sourceIndex, 1);
+      reordered.splice(targetIndex, 0, moved);
+      return reordered;
+    });
+
+    showToast("Waiting list reordered");
+  }
+
   async function changeStatus(appointmentId, nextStatus) {
     try {
       setUpdatingAppointmentId(appointmentId);
@@ -965,12 +1061,28 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
     {error && <div className="auth-error">{error}</div>}
     {loading && <div className="card queue-empty"><span className="queue-pulse" /><p>Loading the queue...</p></div>}
     {!loading && !error && totalInQueue === 0 && <div className="card queue-empty"><div className="queue-empty-icon">✓</div><h3>Queue is clear</h3><p>No checked-in or waiting patients need attention right now.</p></div>}
-    {!loading && !error && totalInQueue > 0 && <div className="queue-columns"><QueueLane title="Waiting" subtitle="Ready for the doctor" appointments={visibleWaitingAppointments} actionLabel="Start Consultation" nextStatus="IN_PROGRESS" updatingAppointmentId={updatingAppointmentId} onStatusChange={changeStatus} /><QueueLane title="Checked In" subtitle="Recently arrived" appointments={visibleCheckedInAppointments} actionLabel="Mark Waiting" nextStatus="WAITING" updatingAppointmentId={updatingAppointmentId} onStatusChange={changeStatus} /></div>}
+    {!loading && !error && totalInQueue > 0 && <div className="queue-columns"><QueueLane title="Waiting" subtitle="Ready for the doctor" appointments={visibleWaitingAppointments} actionLabel="Start Consultation" nextStatus="IN_PROGRESS" updatingAppointmentId={updatingAppointmentId} onStatusChange={changeStatus} isReorderable onReorder={reorderWaitingAppointments} draggedAppointmentId={draggedWaitingAppointmentId} setDraggedAppointmentId={setDraggedWaitingAppointmentId} /><QueueLane title="Checked In" subtitle="Recently arrived" appointments={visibleCheckedInAppointments} actionLabel="Mark Waiting" nextStatus="WAITING" updatingAppointmentId={updatingAppointmentId} onStatusChange={changeStatus} /></div>}
   </section>;
 }
 
-function QueueLane({ title, subtitle, appointments, actionLabel, nextStatus, updatingAppointmentId, onStatusChange }) {
-  return <div className="queue-lane"><div className="queue-lane-header"><div><h3>{title}</h3><p>{subtitle}</p></div><span>{appointments.length}</span></div>{appointments.length === 0 ? <div className="lane-empty">No patients</div> : <div className="queue-list">{appointments.map((appointment, index) => <div className="queue-item" key={appointment.id}>
+function QueueLane({ title, subtitle, appointments, actionLabel, nextStatus, updatingAppointmentId, onStatusChange, isReorderable = false, onReorder, draggedAppointmentId, setDraggedAppointmentId }) {
+  return <div className="queue-lane"><div className="queue-lane-header"><div><h3>{title}</h3><p>{subtitle}</p></div><span>{appointments.length}</span></div>{appointments.length === 0 ? <div className="lane-empty">No patients</div> : <div className="queue-list">{appointments.map((appointment, index) => <div className={`queue-item ${draggedAppointmentId === appointment.id ? "dragging" : ""}`} key={appointment.id} draggable={isReorderable} onDragStart={(event) => {
+      if (!isReorderable) return;
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", String(appointment.id));
+      setDraggedAppointmentId?.(appointment.id);
+    }} onDragOver={(event) => {
+      if (!isReorderable) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    }} onDrop={(event) => {
+      if (!isReorderable || !draggedAppointmentId) return;
+      event.preventDefault();
+      onReorder?.(draggedAppointmentId, appointment.id);
+      setDraggedAppointmentId?.(null);
+    }} onDragEnd={() => {
+      if (isReorderable) setDraggedAppointmentId?.(null);
+    }}>
     <div className="queue-position">{String(index + 1).padStart(2, "0")}</div>
     <div className="queue-patient"><div className="queue-avatar">{initials({ firstName: appointment.patientName })}</div><div><h3>{appointment.patientName || "Unknown patient"}</h3><p>{appointment.serviceName || appointment.service?.name || "Consultation"}</p></div></div>
     <div className="queue-detail"><span>Doctor</span><strong>{appointment.doctorName || appointment.doctor?.name || "-"}</strong></div>

@@ -146,6 +146,14 @@ export function getClinicDashboard(clinicId, token) {
   });
 }
 
+export function getClinicHolidays(clinicId, token) {
+  return request(`/api/dashboard/clinics/${clinicId}/holidays`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
+
 export function getClinicAppointments(clinicId, filters, token) {
   const query = new URLSearchParams();
   if (filters.from) query.set("from", filters.from);
@@ -168,6 +176,15 @@ export function updateAppointmentStatus(appointmentId, status, token) {
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ status }),
+  });
+}
+
+export function cancelAppointment(appointmentId, token) {
+  return request(`/api/appointments/${appointmentId}/cancel`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
   });
 }
 
