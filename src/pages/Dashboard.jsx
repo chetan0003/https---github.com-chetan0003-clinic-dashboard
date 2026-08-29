@@ -115,8 +115,16 @@ export default function Dashboard() {
       try {
         setClinicsLoading(true);
         const result = await getUserClinics(user.username, token);
-        const userClinics = Array.isArray(result?.clinic) ? result.clinic : [];
-        if (!cancelled) setUserDoctorId(result?.doctorId || user?.doctorId || user?.doctor?.id || "");
+        const userClinics = Array.isArray(result?.clinic)
+          ? result.clinic
+          : Array.isArray(result?.data)
+            ? result.data
+            : Array.isArray(result?.clinics)
+              ? result.clinics
+              : Array.isArray(result)
+                ? result
+                : [];
+        if (!cancelled) setUserDoctorId(result?.doctorId || result?.data?.doctorId || user?.doctorId || user?.doctor?.id || "");
         const availableClinics = String(role).toUpperCase() === "SUPER_ADMIN" ? userClinics : userClinics.slice(0, 1);
         if (!cancelled) {
           setClinics(availableClinics);
@@ -1405,17 +1413,22 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
         whatsappNumber: form.whatsappNumber.trim(),
         timezone: form.timezone,
       };
+      let createdClinic = null;
       if (editingClinicId === null) {
-        await saveClinicProfile(payload, token);
+        createdClinic = await saveClinicProfile(payload, token);
       } else {
         await updateClinicProfile(editingClinicId, payload, token);
       }
       const result = await getClinicProfiles(token);
       setClinics(Array.isArray(result) ? result : []);
       setEditingClinicId(null);
-      showToast(editingClinicId === null ? "Clinic profile saved" : "Clinic profile updated");
+      const savedMessage = createdClinic?.message || (editingClinicId === null ? "Clinic profile saved" : "Clinic profile updated");
+      showToast(savedMessage);
     } catch (err) {
-      setError(err.message || "Unable to save clinic profile.");
+      const code = err?.code || "UNKNOWN";
+      const friendlyMessage = err.message || "Unable to save clinic profile.";
+      setError(`${friendlyMessage}${code && code !== "UNKNOWN" ? ` (${code})` : ""}`);
+      showToast(friendlyMessage);
     } finally {
       setSaving(false);
     }
@@ -1599,7 +1612,7 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
           try {
             setWorkingHoursSaving(true);
             setError("");
-            await upsertClinicWorkingHours(clinicId, workingHours.map((hours) => ({
+            const result = await upsertClinicWorkingHours(clinicId, workingHours.map((hours) => ({
               dayOfWeek: hours.day,
               startTime: hours.start,
               endTime: hours.end,
@@ -1607,9 +1620,13 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
               breakEndTime: hours.breakEnd,
               active: hours.active,
             })), token);
-            showToast("Working hours saved successfully");
+            const savedMessage = result?.message || "Working hours saved successfully";
+            showToast(savedMessage);
           } catch (err) {
-            setError(err.message || "Unable to save working hours.");
+            const code = err?.code || "UNKNOWN";
+            const friendlyMessage = err.message || "Unable to save working hours.";
+            setError(`${friendlyMessage}${code && code !== "UNKNOWN" ? ` (${code})` : ""}`);
+            showToast(friendlyMessage);
           } finally {
             setWorkingHoursSaving(false);
           }

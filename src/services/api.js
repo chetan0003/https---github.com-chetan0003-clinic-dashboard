@@ -28,10 +28,35 @@ async function request(path, options = {}) {
       data?.error ||
       (typeof data === "string" && data) ||
       `Request failed with status ${response.status}`;
-    throw new Error(message);
+    const error = new Error(message);
+    error.code = data?.code || "UNKNOWN";
+    error.status = response.status;
+    throw error;
   }
 
   return data;
+}
+
+function unwrapApiData(payload) {
+  if (!payload || typeof payload !== "object") {
+    return payload;
+  }
+
+  if (Array.isArray(payload.data)) return payload.data;
+  if (Array.isArray(payload.clinic)) return payload.clinic;
+  if (Array.isArray(payload.clinics)) return payload.clinics;
+  if (Array.isArray(payload.content)) return payload.content;
+  if (Array.isArray(payload.items)) return payload.items;
+
+  if (payload.data && typeof payload.data === "object") {
+    if (Array.isArray(payload.data.clinic)) return payload.data.clinic;
+    if (Array.isArray(payload.data.clinics)) return payload.data.clinics;
+    if (Array.isArray(payload.data.content)) return payload.data.content;
+    if (Array.isArray(payload.data.items)) return payload.data.items;
+    return payload.data;
+  }
+
+  return payload;
 }
 
 export function login(username, password) {
@@ -56,7 +81,7 @@ export function getClinicDoctors(clinicId, token) {
     headers: {
       Authorization: `Bearer ${token}`,
     },
-  });
+  }).then((payload) => unwrapApiData(payload));
 }
 
 export function createClinicDoctor(clinicId, payload, token) {
@@ -66,6 +91,12 @@ export function createClinicDoctor(clinicId, payload, token) {
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(payload),
+  }).then((payload) => {
+    if (payload && typeof payload === "object") {
+      if (payload.data && typeof payload.data === "object") return payload.data;
+      if (payload.doctor) return payload.doctor;
+    }
+    return payload;
   });
 }
 
@@ -76,6 +107,12 @@ export function updateClinicDoctor(clinicId, doctorId, payload, token) {
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(payload),
+  }).then((response) => {
+    if (response && typeof response === "object") {
+      if (response.data && typeof response.data === "object") return response.data;
+      if (response.doctor) return response.doctor;
+    }
+    return response;
   });
 }
 
@@ -93,7 +130,7 @@ export function getClinicServices(clinicId, token, doctorId) {
     headers: {
       Authorization: `Bearer ${token}`,
     },
-  });
+  }).then((payload) => unwrapApiData(payload));
 }
 
 export function createClinicService(clinicId, payload, token) {
@@ -103,6 +140,13 @@ export function createClinicService(clinicId, payload, token) {
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(payload),
+  }).then((payload) => {
+    if (payload && typeof payload === "object") {
+      if (payload.data && typeof payload.data === "object") return payload.data;
+      if (payload.service) return payload.service;
+      if (payload.services) return payload.services;
+    }
+    return payload;
   });
 }
 
@@ -127,7 +171,7 @@ export function getClinicProfiles(token) {
     headers: {
       Authorization: `Bearer ${token}`,
     },
-  });
+  }).then((payload) => unwrapApiData(payload));
 }
 
 export function getClinicPatients(clinicId, token) {
@@ -135,7 +179,7 @@ export function getClinicPatients(clinicId, token) {
     headers: {
       Authorization: `Bearer ${token}`,
     },
-  });
+  }).then((payload) => unwrapApiData(payload));
 }
 
 export function getClinicDashboard(clinicId, token) {
@@ -151,7 +195,7 @@ export function getClinicHolidays(clinicId, token) {
     headers: {
       Authorization: `Bearer ${token}`,
     },
-  });
+  }).then((payload) => unwrapApiData(payload));
 }
 
 export function createClinicHoliday(clinicId, payload, token) {
@@ -179,7 +223,7 @@ export function getClinicAppointments(clinicId, filters, token) {
     headers: {
       Authorization: `Bearer ${token}`,
     },
-  });
+  }).then((payload) => unwrapApiData(payload));
 }
 
 export function updateAppointmentStatus(appointmentId, status, token) {
@@ -189,6 +233,12 @@ export function updateAppointmentStatus(appointmentId, status, token) {
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ status }),
+  }).then((payload) => {
+    if (payload && typeof payload === "object") {
+      if (payload.data && typeof payload.data === "object") return payload.data;
+      if (payload.appointment) return payload.appointment;
+    }
+    return payload;
   });
 }
 
@@ -198,6 +248,12 @@ export function cancelAppointment(appointmentId, token) {
     headers: {
       Authorization: `Bearer ${token}`,
     },
+  }).then((payload) => {
+    if (payload && typeof payload === "object") {
+      if (payload.data && typeof payload.data === "object") return payload.data;
+      if (payload.appointment) return payload.appointment;
+    }
+    return payload;
   });
 }
 
@@ -236,7 +292,7 @@ export function getDoctorAvailability(clinicId, doctorId, token) {
     headers: {
       Authorization: `Bearer ${token}`,
     },
-  });
+  }).then((payload) => unwrapApiData(payload));
 }
 
 export function saveDoctorAvailability(clinicId, doctorId, payload, token) {
@@ -246,6 +302,12 @@ export function saveDoctorAvailability(clinicId, doctorId, payload, token) {
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(payload),
+  }).then((payload) => {
+    if (payload && typeof payload === "object") {
+      if (payload.data && typeof payload.data === "object") return payload.data;
+      if (payload.availability) return payload.availability;
+    }
+    return payload;
   });
 }
 
