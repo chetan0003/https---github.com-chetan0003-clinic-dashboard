@@ -154,6 +154,19 @@ export function getClinicHolidays(clinicId, token) {
   });
 }
 
+export function createClinicHoliday(clinicId, payload, token) {
+  return request(`/api/dashboard/clinics/${clinicId}/holidays/create`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      holidayDate: payload.holidayDate,
+      name: payload.name,
+    }),
+  });
+}
+
 export function getClinicAppointments(clinicId, filters, token) {
   const query = new URLSearchParams();
   if (filters.from) query.set("from", filters.from);
@@ -210,6 +223,24 @@ export function updateClinicProfile(clinicId, payload, token) {
 
 export function upsertClinicWorkingHours(clinicId, payload, token) {
   return request(`/api/dashboard/clinics/${clinicId}/working-hours`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getDoctorAvailability(clinicId, doctorId, token) {
+  return request(`/api/dashboard/clinics/${clinicId}/doctors/${doctorId}/availability`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
+
+export function saveDoctorAvailability(clinicId, doctorId, payload, token) {
+  return request(`/api/dashboard/clinics/${clinicId}/doctors/${doctorId}/availability`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,

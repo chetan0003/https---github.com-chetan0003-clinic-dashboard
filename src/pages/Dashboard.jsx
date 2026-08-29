@@ -1,7 +1,7 @@
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { cancelAppointment, createClinicDoctor, createClinicService, createClinicUser, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicHolidays, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorServices, getUserClinics, saveClinicProfile, updateAppointmentStatus, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
+import { cancelAppointment, createClinicDoctor, createClinicHoliday, createClinicService, createClinicUser, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicHolidays, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorAvailability, getDoctorServices, getUserClinics, saveClinicProfile, saveDoctorAvailability, updateAppointmentStatus, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
@@ -95,10 +95,12 @@ export default function Dashboard() {
     "Chetan Admin";
   const role = user?.role || "CLINIC ADMIN";
   const avatar = initials(user);
+  const isDoctor = String(role).toUpperCase() === "DOCTOR";
+  const isSuperAdmin = String(role).toUpperCase() === "SUPER_ADMIN";
+  const canViewAppointmentQueue = isDoctor || isSuperAdmin;
   const canManageStaff = ["SUPER_ADMIN", "CLINIC_ADMIN"].includes(String(role).toUpperCase());
   const canManageSettings = ["SUPER_ADMIN", "CLINIC_ADMIN"].includes(String(role).toUpperCase());
   const canViewClinicProfile = String(role).toUpperCase() === "SUPER_ADMIN";
-  const isSuperAdmin = String(role).toUpperCase() === "SUPER_ADMIN";
   const selectedClinicName = clinics.find((clinic) => String(clinic.id) === String(selectedClinicId))?.name || "your clinic";
 
   useEffect(() => {
@@ -232,7 +234,7 @@ export default function Dashboard() {
 
         <div className="nav-section">Clinic Operations</div>
         <NavButton active={page === "appointments"} onClick={() => go("appointments")} icon="◷">Appointments</NavButton>
-        <NavButton active={page === "queue"} onClick={() => go("queue")} icon="☷">Appointment Queue</NavButton>
+        {canViewAppointmentQueue && <NavButton active={page === "queue"} onClick={() => go("queue")} icon="☷">Appointment Queue</NavButton>}
         <NavButton active={page === "patients"} onClick={() => go("patients")} icon="♙">Patients</NavButton>
         <NavButton active={page === "doctors"} onClick={() => go("doctors")} icon="♧">Doctors</NavButton>
         <NavButton active={page === "services"} onClick={() => go("services")} icon="▤">Services</NavButton>
@@ -301,7 +303,7 @@ export default function Dashboard() {
             />
           )}
 
-          {page === "queue" && (
+          {canViewAppointmentQueue && page === "queue" && (
             <AppointmentQueue
               clinicId={selectedClinicId}
               token={token}
@@ -365,7 +367,7 @@ export default function Dashboard() {
 
           {page === "reports" && <Reports showToast={showToast} />}
 
-          {page === "settings" && canManageSettings && <Settings showToast={showToast} clinicId={selectedClinicId} token={token} canViewClinicProfile={canViewClinicProfile} />}
+          {page === "settings" && canManageSettings && <Settings showToast={showToast} clinicId={selectedClinicId} doctorId={userDoctorId || 1} token={token} canViewClinicProfile={canViewClinicProfile} />}
           </>}
         </div>
       </main>
@@ -1239,7 +1241,7 @@ function Reports({ showToast }) {
   </section>;
 }
 
-function Settings({ showToast, clinicId, token, canViewClinicProfile }) {
+function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }) {
   const [form, setForm] = useState({
     name: "Sunrise Multispeciality",
     whatsappNumber: "+91 98765 43210",
@@ -1251,6 +1253,21 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile }) {
   const [loadingClinics, setLoadingClinics] = useState(true);
   const [editingClinicId, setEditingClinicId] = useState(null);
   const [workingHoursSaving, setWorkingHoursSaving] = useState(false);
+  const [holidayForm, setHolidayForm] = useState({ holidayDate: new Date().toISOString().slice(0, 10), name: "" });
+  const [holidaySaving, setHolidaySaving] = useState(false);
+  const [holidayList, setHolidayList] = useState([]);
+  const [holidayListLoading, setHolidayListLoading] = useState(true);
+  const defaultDoctorAvailability = [
+    { day: "MONDAY", active: true, start: "09:00", end: "15:00", breakStart: "13:00", breakEnd: "14:00" },
+    { day: "TUESDAY", active: true, start: "13:00", end: "19:00", breakStart: "", breakEnd: "" },
+    { day: "WEDNESDAY", active: true, start: "09:00", end: "15:00", breakStart: "13:00", breakEnd: "14:00" },
+    { day: "THURSDAY", active: true, start: "13:00", end: "19:00", breakStart: "", breakEnd: "" },
+    { day: "FRIDAY", active: true, start: "09:00", end: "15:00", breakStart: "13:00", breakEnd: "14:00" },
+    { day: "SATURDAY", active: true, start: "09:00", end: "15:00", breakStart: "13:00", breakEnd: "18:00" },
+    { day: "SUNDAY", active: false, start: "09:00", end: "15:00", breakStart: "13:00", breakEnd: "14:00" },
+  ];
+  const [doctorAvailabilitySaving, setDoctorAvailabilitySaving] = useState(false);
+  const [doctorAvailability, setDoctorAvailability] = useState(defaultDoctorAvailability);
   const [workingHours, setWorkingHours] = useState([
     { day: "MONDAY", active: true, start: "09:00", end: "19:00", breakStart: "13:00", breakEnd: "14:00" },
     { day: "TUESDAY", active: true, start: "09:00", end: "19:00", breakStart: "13:00", breakEnd: "14:00" },
@@ -1290,6 +1307,83 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile }) {
     loadClinics();
     return () => { cancelled = true; };
   }, [token, canViewClinicProfile]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadHolidays() {
+      if (!token || !clinicId) {
+        setHolidayList([]);
+        setHolidayListLoading(false);
+        return;
+      }
+
+      try {
+        setHolidayListLoading(true);
+        const result = await getClinicHolidays(clinicId, token);
+        const holidays = Array.isArray(result)
+          ? result
+          : Array.isArray(result?.data)
+            ? result.data
+            : Array.isArray(result?.content)
+              ? result.content
+              : [];
+        if (!cancelled) setHolidayList(holidays);
+      } catch (err) {
+        if (!cancelled) setHolidayList([]);
+      } finally {
+        if (!cancelled) setHolidayListLoading(false);
+      }
+    }
+
+    loadHolidays();
+    return () => { cancelled = true; };
+  }, [clinicId, token]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDoctorAvailabilitySchedule() {
+      if (!token || !clinicId || !doctorId) {
+        setDoctorAvailability(defaultDoctorAvailability);
+        return;
+      }
+
+      try {
+        const result = await getDoctorAvailability(clinicId, Number(doctorId), token);
+        const items = Array.isArray(result)
+          ? result
+          : Array.isArray(result?.data)
+            ? result.data
+            : Array.isArray(result?.content)
+              ? result.content
+              : [];
+
+        if (cancelled) return;
+
+        const mapped = defaultDoctorAvailability.map((slot) => {
+          const match = items.find((item) => String(item.dayOfWeek || item.day || item.day_of_week) === String(slot.day));
+          if (!match) return slot;
+
+          return {
+            ...slot,
+            active: match.active ?? true,
+            start: match.startTime || match.start || slot.start,
+            end: match.endTime || match.end || slot.end,
+            breakStart: match.breakStartTime || match.breakStart || "",
+            breakEnd: match.breakEndTime || match.breakEnd || "",
+          };
+        });
+
+        setDoctorAvailability(mapped);
+      } catch (err) {
+        if (!cancelled) setDoctorAvailability(defaultDoctorAvailability);
+      }
+    }
+
+    loadDoctorAvailabilitySchedule();
+    return () => { cancelled = true; };
+  }, [clinicId, doctorId, token]);
 
   async function handleSave() {
     if (!token) {
@@ -1343,6 +1437,86 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile }) {
     setError("");
   }
 
+  async function handleHolidaySave() {
+    if (!token) {
+      setError("A clinic-admin login token is required.");
+      return;
+    }
+
+    if (!clinicId) {
+      setError("Please select a clinic first.");
+      return;
+    }
+
+    if (!holidayForm.holidayDate || !holidayForm.name.trim()) {
+      setError("Please enter both holiday date and holiday name.");
+      return;
+    }
+
+    try {
+      setHolidaySaving(true);
+      setError("");
+      await createClinicHoliday(clinicId, {
+        holidayDate: holidayForm.holidayDate,
+        name: holidayForm.name.trim(),
+      }, token);
+
+      const result = await getClinicHolidays(clinicId, token);
+      const holidays = Array.isArray(result)
+        ? result
+        : Array.isArray(result?.data)
+          ? result.data
+          : Array.isArray(result?.content)
+            ? result.content
+            : [];
+      setHolidayList(holidays);
+      setHolidayForm({ holidayDate: new Date().toISOString().slice(0, 10), name: "" });
+      showToast("Clinic holiday saved");
+    } catch (err) {
+      setError(err.message || "Unable to save clinic holiday.");
+    } finally {
+      setHolidaySaving(false);
+    }
+  }
+
+  async function handleDoctorAvailabilitySave() {
+    if (!token) {
+      setError("A clinic-admin login token is required.");
+      return;
+    }
+
+    if (!clinicId) {
+      setError("Please select a clinic first.");
+      return;
+    }
+
+    const targetDoctorId = Number(doctorId || 1);
+    if (!targetDoctorId) {
+      setError("Please select a valid doctor before saving availability.");
+      return;
+    }
+
+    try {
+      setDoctorAvailabilitySaving(true);
+      setError("");
+      const payload = doctorAvailability.filter((slot) => slot.active).map((slot) => ({
+        dayOfWeek: slot.day,
+        startTime: slot.start,
+        endTime: slot.end,
+        breakStartTime: slot.breakStart || null,
+        breakEndTime: slot.breakEnd || null,
+        active: slot.active,
+      }));
+
+      await saveDoctorAvailability(clinicId, targetDoctorId, payload, token);
+      showToast("Doctor availability saved");
+    } catch (err) {
+      setError(err.message || "Unable to save doctor availability.");
+    } finally {
+      setDoctorAvailabilitySaving(false);
+    }
+  }
+
   return <section className="page active"><div className="card"><div className="settings-grid">
     <div className="settings-nav">{canViewClinicProfile && <button className="active">Clinic Profile</button>}<button>Appointment Settings</button><button>WhatsApp / AI</button><button>Notifications</button><button>Security</button></div>
     <div className="settings-main">
@@ -1367,6 +1541,41 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile }) {
         {!loadingClinics && clinics.length > 0 && <div className="table-wrap"><table><thead><tr><th>ID</th><th>Clinic Name</th><th>WhatsApp Number</th><th>Timezone</th><th>Status</th><th>Created</th>{canViewClinicProfile && <th>Action</th>}</tr></thead><tbody>
           {clinics.map((clinic) => <tr key={clinic.id}><td>{clinic.id}</td><td><strong>{clinic.name}</strong></td><td>{clinic.whatsappNumber}</td><td>{clinic.timezone}</td><td><span className={`status ${clinic.active ? "confirmed" : "cancelled"}`}>{clinic.active ? "ACTIVE" : "INACTIVE"}</span></td><td>{clinic.createdAt ? new Date(clinic.createdAt).toLocaleDateString() : "-"}</td>{canViewClinicProfile && <td><button className="btn btn-light" onClick={() => editClinic(clinic)}>Edit</button></td>}</tr>)}
         </tbody></table></div>}
+      </div>
+      <div className="mt">
+        <h3>Clinic Holidays</h3>
+        <p className="muted">Create a holiday that will be marked for this clinic.</p>
+        <div className="form-grid mt">
+          <Field label="Holiday Date" type="date" value={holidayForm.holidayDate} onChange={(e) => setHolidayForm((value) => ({ ...value, holidayDate: e.target.value }))} />
+          <Field label="Holiday Name" value={holidayForm.name} onChange={(e) => setHolidayForm((value) => ({ ...value, name: e.target.value }))} placeholder="e.g. Gandhi Jayanti" />
+        </div>
+        <div className="quick-actions mt">
+          <button className="btn btn-primary" onClick={handleHolidaySave} disabled={holidaySaving}>{holidaySaving ? "Saving..." : "Save Holiday"}</button>
+        </div>
+        <div className="holiday-settings mt">
+          {holidayListLoading && <p className="muted">Loading clinic holidays...</p>}
+          {!holidayListLoading && holidayList.length === 0 && <p className="muted">No holidays saved for this clinic yet.</p>}
+          {!holidayListLoading && holidayList.length > 0 && <div className="holiday-settings-list">{holidayList.filter((holiday) => holiday.active !== false).map((holiday) => {
+            const holidayDate = holiday.holidayDate || holiday.holiday_date || holiday.date;
+            const parsedDate = holidayDate ? new Date(`${holidayDate}T00:00:00`) : null;
+            return <div className="holiday-settings-row" key={holiday.id || `${holidayDate}-${holiday.name}`}>
+              <div className="holiday-settings-date">{parsedDate ? parsedDate.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : holidayDate || "-"}</div>
+              <div className="holiday-settings-name">{holiday.name}</div>
+            </div>;
+          })}</div>}
+        </div>
+      </div>
+      <div className="mt">
+        <h3>Doctor Availability</h3>
+        <p className="muted">Set the doctor’s schedule for each day of the week.</p>
+        <div className="working-hours-list">
+          {doctorAvailability.map((slot, index) => <div className={`working-hour-row ${slot.active ? "" : "disabled"}`} key={slot.day}>
+            <label className="day-toggle"><input type="checkbox" checked={slot.active} onChange={(e) => setDoctorAvailability((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, active: e.target.checked } : item))} /><strong>{slot.day}</strong></label>
+            <div className="working-time"><label>Start<input type="time" value={slot.start} disabled={!slot.active} onChange={(e) => setDoctorAvailability((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, start: e.target.value } : item))} /></label><span>to</span><label>End<input type="time" value={slot.end} disabled={!slot.active} onChange={(e) => setDoctorAvailability((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, end: e.target.value } : item))} /></label></div>
+            <div className="working-time"><label>Break from<input type="time" value={slot.breakStart || ""} disabled={!slot.active} onChange={(e) => setDoctorAvailability((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, breakStart: e.target.value } : item))} /></label><span>to</span><label>Break to<input type="time" value={slot.breakEnd || ""} disabled={!slot.active} onChange={(e) => setDoctorAvailability((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, breakEnd: e.target.value } : item))} /></label></div>
+          </div>)}
+        </div>
+        <button className="btn btn-primary mt" onClick={handleDoctorAvailabilitySave} disabled={doctorAvailabilitySaving}>{doctorAvailabilitySaving ? "Saving..." : "Save Doctor Availability"}</button>
       </div>
       <div className="working-hours mt">
         <h3>Working Hours</h3>
