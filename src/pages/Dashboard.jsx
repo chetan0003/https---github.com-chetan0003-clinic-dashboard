@@ -1,7 +1,7 @@
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { cancelAppointment, createClinicDoctor, createClinicHoliday, createClinicService, createClinicUser, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicHolidays, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorAvailability, getDoctorServices, getUserClinics, saveClinicProfile, saveDoctorAvailability, updateAppointmentStatus, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
+import { cancelAppointment, createClinicAppointment, createClinicDoctor, createClinicHoliday, createClinicPatient, createClinicService, createClinicUser, followUpAppointment, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicHolidays, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorAvailability, getDoctorServices, getUserClinics, saveClinicProfile, saveDoctorAvailability, searchClinicPatientsByQuery, updateAppointmentStatus, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
@@ -80,6 +80,16 @@ export default function Dashboard() {
   const [doctorRefreshKey, setDoctorRefreshKey] = useState(0);
   const [doctorServices, setDoctorServices] = useState([]);
   const [doctorServicesLoading, setDoctorServicesLoading] = useState(false);
+  const [patientForm, setPatientForm] = useState({ name: "", whatsappNumber: "", email: "", dateOfBirth: "" });
+  const [patientLoading, setPatientLoading] = useState(false);
+  const [patientError, setPatientError] = useState("");
+  const [appointmentForm, setAppointmentForm] = useState({ patientId: "", patientQuery: "", doctorId: "", serviceId: "", appointmentDate: "", startTime: "09:00", endTime: "09:30" });
+  const [appointmentPatientOptions, setAppointmentPatientOptions] = useState([]);
+  const [appointmentPatientLoading, setAppointmentPatientLoading] = useState(false);
+  const [appointmentDoctors, setAppointmentDoctors] = useState([]);
+  const [appointmentServices, setAppointmentServices] = useState([]);
+  const [appointmentLoading, setAppointmentLoading] = useState(false);
+  const [appointmentError, setAppointmentError] = useState("");
   const [serviceForm, setServiceForm] = useState({ name: "", durationMinutes: "30", price: "" });
   const [serviceLoading, setServiceLoading] = useState(false);
   const [serviceError, setServiceError] = useState("");
@@ -208,6 +218,38 @@ export default function Dashboard() {
     loadStaffDoctors();
     return () => { cancelled = true; };
   }, [selectedClinicId, token]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAppointmentOptions() {
+      if (!modal || modal !== "appointment" || !token || !selectedClinicId) {
+        setAppointmentDoctors([]);
+        setAppointmentServices([]);
+        return;
+      }
+
+      try {
+        const [doctorResult, serviceResult] = await Promise.all([
+          getClinicDoctors(selectedClinicId, token),
+          getClinicServices(selectedClinicId, token),
+        ]);
+
+        if (!cancelled) {
+          setAppointmentDoctors(Array.isArray(doctorResult) ? doctorResult : []);
+          setAppointmentServices(Array.isArray(serviceResult) ? serviceResult : []);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setAppointmentDoctors([]);
+          setAppointmentServices([]);
+        }
+      }
+    }
+
+    loadAppointmentOptions();
+    return () => { cancelled = true; };
+  }, [modal, selectedClinicId, token]);
 
   function showToast(message) {
     setToast(message);
@@ -381,26 +423,146 @@ export default function Dashboard() {
       </main>
 
       {modal === "appointment" && (
-        <Modal title="New Appointment" onClose={() => setModal(null)} onSave={() => { setModal(null); showToast("Appointment created successfully"); }} saveLabel="Create Appointment">
+        <Modal
+          title="New Appointment"
+          onClose={() => { setModal(null); setAppointmentError(""); setAppointmentForm({ patientId: "", patientQuery: "", doctorId: "", serviceId: "", appointmentDate: "", startTime: "09:00", endTime: "09:30" }); setAppointmentPatientOptions([]); }}
+          onSave={async () => {
+            setAppointmentError("");
+            if (!selectedClinicId) {
+              setAppointmentError("Please select a clinic first.");
+              return;
+            }
+            if (!appointmentForm.patientId || !appointmentForm.doctorId || !appointmentForm.serviceId || !appointmentForm.appointmentDate || !appointmentForm.startTime || !appointmentForm.endTime) {
+              setAppointmentError("Please fill in all required fields.");
+              return;
+            }
+
+            try {
+              setAppointmentLoading(true);
+              await createClinicAppointment(selectedClinicId, {
+                patientId: appointmentForm.patientId,
+                doctorId: appointmentForm.doctorId,
+                serviceId: appointmentForm.serviceId,
+                appointmentDate: appointmentForm.appointmentDate,
+                startTime: appointmentForm.startTime,
+                endTime: appointmentForm.endTime,
+              }, token);
+              setModal(null);
+              setAppointmentForm({ patientId: "", patientQuery: "", doctorId: "", serviceId: "", appointmentDate: "", startTime: "09:00", endTime: "09:30" });
+              setAppointmentPatientOptions([]);
+              showToast("Appointment created successfully");
+            } catch (err) {
+              setAppointmentError(err.message || "Unable to create appointment.");
+            } finally {
+              setAppointmentLoading(false);
+            }
+          }}
+          saveLabel={appointmentLoading ? "Creating..." : "Create Appointment"}
+          saveDisabled={appointmentLoading}
+        >
           <div className="form-grid">
-            <Field label="Patient Name" placeholder="Enter patient name" />
-            <Field label="WhatsApp Number" placeholder="+91..." />
-            <Field label="Service" select options={["Dental Consultation", "Teeth Cleaning", "Health Consultation"]} />
-            <Field label="Doctor" select options={["Dr Patel", "Dr Sharma", "Dr Nikhil"]} />
-            <Field label="Date" type="date" defaultValue="2026-08-24" />
-            <Field label="Time" select options={["09:00 AM", "10:30 AM", "12:00 PM", "03:30 PM", "06:00 PM"]} />
+            <div className="field">
+              <label>Patient *</label>
+              <input value={appointmentForm.patientQuery} placeholder="Search patient by name or phone" onChange={async (e) => {
+                const query = e.target.value;
+                setAppointmentForm((value) => ({ ...value, patientQuery: query }));
+                if (!selectedClinicId || !token || query.trim().length < 2) {
+                  setAppointmentPatientOptions([]);
+                  return;
+                }
+                try {
+                  setAppointmentPatientLoading(true);
+                  const results = await searchClinicPatientsByQuery(selectedClinicId, query, token);
+                  setAppointmentPatientOptions(Array.isArray(results) ? results : []);
+                } catch (err) {
+                  setAppointmentPatientOptions([]);
+                } finally {
+                  setAppointmentPatientLoading(false);
+                }
+              }} />
+            </div>
+            <div className="field">
+              <label>Patient</label>
+              <select value={appointmentForm.patientId} onChange={(e) => setAppointmentForm((value) => ({ ...value, patientId: e.target.value }))} disabled={appointmentPatientLoading || appointmentPatientOptions.length === 0}>
+                <option value="">{appointmentPatientLoading ? "Loading patients..." : appointmentPatientOptions.length === 0 ? "No patient found" : "Select patient"}</option>
+                {appointmentPatientOptions.map((patient) => (
+                  <option key={patient.id} value={patient.id}>{patient.name} ({patient.phoneNo || patient.whatsappNumber || "No phone"})</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Service *</label>
+              <select value={appointmentForm.serviceId} onChange={(e) => setAppointmentForm((value) => ({ ...value, serviceId: e.target.value }))} disabled={appointmentServices.length === 0}>
+                <option value="">{appointmentServices.length === 0 ? "No services available" : "Select service"}</option>
+                {appointmentServices.map((service) => (
+                  <option key={service.id} value={service.id}>{service.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Doctor *</label>
+              <select value={appointmentForm.doctorId} onChange={(e) => setAppointmentForm((value) => ({ ...value, doctorId: e.target.value }))} disabled={appointmentDoctors.length === 0}>
+                <option value="">{appointmentDoctors.length === 0 ? "No doctors available" : "Select doctor"}</option>
+                {appointmentDoctors.map((doctor) => (
+                  <option key={doctor.id} value={doctor.id}>{doctor.name}</option>
+                ))}
+              </select>
+            </div>
+            <Field label="Date *" type="date" value={appointmentForm.appointmentDate} onChange={(e) => setAppointmentForm((value) => ({ ...value, appointmentDate: e.target.value }))} />
+            <div className="field">
+              <label>Start Time *</label>
+              <input type="time" value={appointmentForm.startTime} onChange={(e) => setAppointmentForm((value) => ({ ...value, startTime: e.target.value }))} />
+            </div>
+            <div className="field">
+              <label>End Time *</label>
+              <input type="time" value={appointmentForm.endTime} onChange={(e) => setAppointmentForm((value) => ({ ...value, endTime: e.target.value }))} />
+            </div>
           </div>
+          {appointmentError && <div className="auth-error" style={{ marginTop: 12 }}>{appointmentError}</div>}
         </Modal>
       )}
 
       {modal === "patient" && (
-        <Modal title="Add Patient" onClose={() => setModal(null)} onSave={() => { setModal(null); showToast("Patient added"); }} saveLabel="Add Patient">
+        <Modal
+          title="Add Patient"
+          onClose={() => { setModal(null); setPatientError(""); setPatientForm({ name: "", whatsappNumber: "", email: "", dateOfBirth: "" }); }}
+          onSave={async () => {
+            setPatientError("");
+            if (!selectedClinicId) {
+              setPatientError("Please select a clinic first.");
+              return;
+            }
+            if (!patientForm.name.trim() || !patientForm.whatsappNumber.trim()) {
+              setPatientError("Please enter patient name and WhatsApp number.");
+              return;
+            }
+            try {
+              setPatientLoading(true);
+              await createClinicPatient(selectedClinicId, {
+                name: patientForm.name.trim(),
+                whatsappNumber: patientForm.whatsappNumber.trim(),
+                email: patientForm.email.trim(),
+                dateOfBirth: patientForm.dateOfBirth,
+              }, token);
+              setModal(null);
+              setPatientForm({ name: "", whatsappNumber: "", email: "", dateOfBirth: "" });
+              showToast("Patient added successfully");
+            } catch (err) {
+              setPatientError(err.message || "Unable to add patient.");
+            } finally {
+              setPatientLoading(false);
+            }
+          }}
+          saveLabel={patientLoading ? "Adding..." : "Add Patient"}
+          saveDisabled={patientLoading}
+        >
           <div className="form-grid">
-            <Field label="Patient Name" placeholder="Full name" />
-            <Field label="WhatsApp Number" placeholder="+91..." />
-            <Field label="Email" placeholder="Optional" />
-            <Field label="Date of Birth" type="date" />
+            <Field label="Patient Name *" placeholder="Full name" value={patientForm.name} onChange={(e) => setPatientForm((v) => ({ ...v, name: e.target.value }))} />
+            <Field label="WhatsApp Number *" placeholder="+91..." value={patientForm.whatsappNumber} onChange={(e) => setPatientForm((v) => ({ ...v, whatsappNumber: e.target.value }))} />
+            <Field label="Email" type="email" placeholder="Optional" value={patientForm.email} onChange={(e) => setPatientForm((v) => ({ ...v, email: e.target.value }))} />
+            <Field label="Date of Birth" type="date" value={patientForm.dateOfBirth} onChange={(e) => setPatientForm((v) => ({ ...v, dateOfBirth: e.target.value }))} />
           </div>
+          {patientError && <div className="auth-error" style={{ marginTop: 12 }}>{patientError}</div>}
         </Modal>
       )}
 
@@ -799,11 +961,59 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   const [error, setError] = useState("");
   const [updatingAppointmentId, setUpdatingAppointmentId] = useState(null);
   const [cancelingAppointmentId, setCancelingAppointmentId] = useState(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(5);
+  const [pagination, setPagination] = useState(null);
   const isDoctor = String(userRole).toUpperCase() === "DOCTOR";
 
   useEffect(() => {
     if (isDoctor) setDoctorId(userDoctorId ? String(userDoctorId) : "");
   }, [isDoctor, userDoctorId]);
+
+  async function loadAppointmentsForPage(nextPage) {
+    if (!token || !clinicId) {
+      setRows([]);
+      setLoading(false);
+      setError(!token ? "Please log in to view appointments." : "Please select a clinic.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      const result = await getClinicAppointments(clinicId, {
+        from,
+        to,
+        doctorId: isDoctor ? userDoctorId : doctorId,
+        serviceId,
+        status,
+        page: nextPage,
+        size: pageSize,
+      }, token);
+
+      const items = Array.isArray(result) ? result : result?.items || [];
+      const nextPagination = result?.pagination || null;
+      setRows(items);
+      setPagination(nextPagination);
+    } catch (err) {
+      setError(err.message || "Unable to load appointments.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handlePageChange(direction) {
+    const nextPage = Math.max(0, page + direction);
+    if (nextPage === page) return;
+    setPage(nextPage);
+    loadAppointmentsForPage(nextPage);
+  }
+
+  function handlePageSizeChange(nextSize) {
+    setPage(0);
+    setPageSize(Number(nextSize) || 5);
+    loadAppointmentsForPage(0);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -825,8 +1035,15 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
           doctorId: isDoctor ? userDoctorId : doctorId,
           serviceId,
           status,
+          page,
+          size: pageSize,
         }, token);
-        if (!cancelled) setRows(Array.isArray(result) ? result : []);
+        if (!cancelled) {
+          const items = Array.isArray(result) ? result : result?.items || [];
+          const nextPagination = result?.pagination || null;
+          setRows(items);
+          setPagination(nextPagination);
+        }
       } catch (err) {
         if (!cancelled) setError(err.message || "Unable to load appointments.");
       } finally {
@@ -836,7 +1053,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
 
     loadAppointments();
     return () => { cancelled = true; };
-  }, [clinicId, token, from, to, doctorId, serviceId, status, isDoctor, userDoctorId]);
+  }, [clinicId, token, from, to, doctorId, serviceId, status, isDoctor, userDoctorId, page, pageSize]);
 
   const filteredRows = rows.filter((appointment) => {
     const query = search.trim().toLowerCase();
@@ -908,11 +1125,11 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   return <section className="page active"><div className="card">
     <div className="card-header"><div><h3>Appointments</h3><p>Manage and monitor clinic appointments</p></div><button className="btn btn-primary" onClick={() => openModal("appointment")}>+ New Appointment</button></div>
     <div className="filters">
-      <input className="control" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-      <input className="control" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-      {!isDoctor && <input className="control" type="number" min="1" placeholder="Doctor ID" value={doctorId} onChange={(e) => setDoctorId(e.target.value)} />}
-      <input className="control" type="number" min="1" placeholder="Service ID" value={serviceId} onChange={(e) => setServiceId(e.target.value)} />
-      <select className="control" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All Status</option><option value="CONFIRMED">Confirmed</option><option value="PENDING">Pending</option><option value="CANCELLED">Cancelled</option></select>
+      <input className="control" type="date" value={from} onChange={(e) => { setPage(0); setFrom(e.target.value); }} />
+      <input className="control" type="date" value={to} onChange={(e) => { setPage(0); setTo(e.target.value); }} />
+      {!isDoctor && <input className="control" type="number" min="1" placeholder="Doctor ID" value={doctorId} onChange={(e) => { setPage(0); setDoctorId(e.target.value); }} />}
+      <input className="control" type="number" min="1" placeholder="Service ID" value={serviceId} onChange={(e) => { setPage(0); setServiceId(e.target.value); }} />
+      <select className="control" value={status} onChange={(e) => { setPage(0); setStatus(e.target.value); }}><option value="">All Status</option><option value="CONFIRMED">Confirmed</option><option value="PENDING">Pending</option><option value="CANCELLED">Cancelled</option></select>
     </div>
     {error && <div className="auth-error">{error}</div>}
     {loading && <div className="card-body"><p className="muted">Loading appointments...</p></div>}
@@ -920,7 +1137,14 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
     {!loading && !error && filteredRows.length > 0 && <div className="table-wrap"><table><thead><tr><th>Patient</th><th>Service</th><th>Doctor</th><th>Date</th><th>Time</th><th>Status</th><th>Action</th></tr></thead><tbody>
       {filteredRows.map((appointment) => { const action = getAppointmentAction(appointment); const isUpdating = updatingAppointmentId === appointment.id; const isCancelling = cancelingAppointmentId === appointment.id; return <tr key={appointment.id}><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "-"}</strong><span>{appointment.phoneNo || appointment.patientPhone || "-"}</span></div></div></td><td>{appointment.serviceName || appointment.service?.name || "-"}</td><td>{appointment.doctorName || appointment.doctor?.name || "-"}</td><td>{appointment.appointmentDate || appointment.date || "-"}</td><td>{formatTime(appointment.startTime || appointment.time)}</td><td><span className={`status ${String(appointment.status || "").toLowerCase()}`}>{appointment.status || "-"}</span></td><td><div className="row-actions">{action && <button className="btn btn-light" disabled={isUpdating} onClick={() => handleStatusUpdate(appointment.id, action.nextStatus)}>{isUpdating ? "Updating..." : action.label}</button>}{canCancelAppointment(appointment) && <button className="btn btn-danger" disabled={isCancelling} onClick={() => handleCancelAppointment(appointment.id)}>{isCancelling ? "Cancelling..." : "Cancel"}</button>}</div></td></tr>; })}
     </tbody></table></div>}
-    {!loading && !error && <div className="pagination"><span>Showing {filteredRows.length} appointments</span></div>}
+    {!loading && !error && <div className="pagination">
+      <button className="btn btn-light" disabled={page === 0} onClick={() => handlePageChange(-1)}>Previous</button>
+      <span className="pagination-meta">Page {Math.max((pagination?.number ?? page) + 1, 1)} of {Math.max(pagination?.totalPages || 1, 1)}</span>
+      <div className="pagination-actions">
+        <select className="control" value={pageSize} onChange={(e) => handlePageSizeChange(e.target.value)} style={{ maxWidth: 90 }}><option value={5}>5</option><option value={10}>10</option><option value={20}>20</option></select>
+        <button className="btn btn-light" disabled={!pagination || page >= (pagination.totalPages || 1) - 1} onClick={() => handlePageChange(1)}>Next</button>
+      </div>
+    </div>}
   </div></section>;
 }
 
@@ -929,23 +1153,31 @@ function Patients({ openModal, showToast, clinicId, token }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(5);
+  const [pagination, setPagination] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadPatients() {
-      if (!token) {
+      if (!token || !clinicId) {
         setPatients([]);
         setLoading(false);
-        setError("Please log in to view patients.");
+        setError(!token ? "Please log in to view patients." : "Please select a clinic.");
         return;
       }
 
       try {
         setLoading(true);
         setError("");
-        const result = await getClinicPatients(clinicId, token);
-        if (!cancelled) setPatients(Array.isArray(result) ? result : []);
+        const result = await getClinicPatients(clinicId, { page, size: pageSize }, token);
+        if (!cancelled) {
+          const items = Array.isArray(result) ? result : result?.items || [];
+          const nextPagination = result?.pagination || null;
+          setPatients(items);
+          setPagination(nextPagination);
+        }
       } catch (err) {
         if (!cancelled) setError(err.message || "Unable to load patients.");
       } finally {
@@ -955,12 +1187,23 @@ function Patients({ openModal, showToast, clinicId, token }) {
 
     loadPatients();
     return () => { cancelled = true; };
-  }, [clinicId, token]);
+  }, [clinicId, token, page, pageSize]);
 
   const filteredPatients = patients.filter((patient) => {
     const query = searchTerm.trim().toLowerCase();
     return !query || patient.name?.toLowerCase().includes(query) || patient.phoneNo?.toLowerCase().includes(query);
   });
+
+  function handlePageChange(direction) {
+    const nextPage = Math.max(0, page + direction);
+    if (nextPage === page) return;
+    setPage(nextPage);
+  }
+
+  function handlePageSizeChange(nextSize) {
+    setPage(0);
+    setPageSize(Number(nextSize) || 5);
+  }
 
   return <section className="page active"><div className="card">
     <div className="card-header"><div><h3>Patients</h3><p>Patients associated with this clinic</p></div><button className="btn btn-primary" onClick={() => openModal("patient")}>+ Add Patient</button></div>
@@ -973,13 +1216,21 @@ function Patients({ openModal, showToast, clinicId, token }) {
     {!loading && !error && filteredPatients.length > 0 && <div className="table-wrap"><table><thead><tr><th>ID</th><th>Patient</th><th>WhatsApp</th><th>Clinic ID</th><th>Action</th></tr></thead><tbody>
       {filteredPatients.map((patient) => <tr key={patient.id}><td>{patient.id}</td><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: patient.name })}</div><div><strong>{patient.name}</strong><span>Patient</span></div></div></td><td>{patient.phoneNo}</td><td>{patient.clinicId}</td><td><button className="btn btn-light" onClick={() => showToast("Patient profile opened")}>View</button></td></tr>)}
     </tbody></table></div>}
+    {!loading && !error && <div className="pagination">
+      <button className="btn btn-light" disabled={page === 0} onClick={() => handlePageChange(-1)}>Previous</button>
+      <span className="pagination-meta">Page {Math.max((pagination?.number ?? page) + 1, 1)} of {Math.max(pagination?.totalPages || 1, 1)}</span>
+      <div className="pagination-actions">
+        <select className="control" value={pageSize} onChange={(e) => handlePageSizeChange(e.target.value)} style={{ maxWidth: 90 }}><option value={5}>5</option><option value={10}>10</option><option value={20}>20</option></select>
+        <button className="btn btn-light" disabled={!pagination || page >= (pagination.totalPages || 1) - 1} onClick={() => handlePageChange(1)}>Next</button>
+      </div>
+    </div>}
   </div></section>;
 }
 
 function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, showToast }) {
   const today = new Date().toISOString().slice(0, 10);
+  const [inProgressAppointments, setInProgressAppointments] = useState([]);
   const [waitingAppointments, setWaitingAppointments] = useState([]);
-  const [checkedInAppointments, setCheckedInAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [updatingAppointmentId, setUpdatingAppointmentId] = useState(null);
@@ -991,8 +1242,8 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
 
     async function loadQueue() {
       if (!token || !clinicId) {
+        setInProgressAppointments([]);
         setWaitingAppointments([]);
-        setCheckedInAppointments([]);
         setLoading(false);
         setError(!token ? "Please log in to view the appointment queue." : "Please select a clinic.");
         return;
@@ -1002,13 +1253,13 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
         setLoading(true);
         setError("");
         const filters = { from: today, to: today, doctorId: isDoctor ? userDoctorId : "" };
-        const [waitingResult, checkedInResult] = await Promise.all([
+        const [inProgressResult, waitingResult] = await Promise.all([
+          getClinicAppointments(clinicId, { ...filters, status: "IN_PROGRESS" }, token),
           getClinicAppointments(clinicId, { ...filters, status: "WAITING" }, token),
-          getClinicAppointments(clinicId, { ...filters, status: "CHECKED_IN" }, token),
         ]);
         if (!cancelled) {
+          setInProgressAppointments(Array.isArray(inProgressResult) ? inProgressResult : []);
           setWaitingAppointments(Array.isArray(waitingResult) ? waitingResult : []);
-          setCheckedInAppointments(Array.isArray(checkedInResult) ? checkedInResult : []);
         }
       } catch (err) {
         if (!cancelled) setError(err.message || "Unable to load appointment queue.");
@@ -1027,9 +1278,9 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
       .some((value) => String(value || "").toLowerCase().includes(query));
   };
 
+  const visibleInProgressAppointments = inProgressAppointments.filter(matchesSearch);
   const visibleWaitingAppointments = waitingAppointments.filter(matchesSearch);
-  const visibleCheckedInAppointments = checkedInAppointments.filter(matchesSearch);
-  const totalInQueue = visibleWaitingAppointments.length + visibleCheckedInAppointments.length;
+  const totalInQueue = visibleInProgressAppointments.length + visibleWaitingAppointments.length;
 
   function reorderWaitingAppointments(draggedId, targetId) {
     if (!draggedId || !targetId || String(draggedId) === String(targetId)) return;
@@ -1048,15 +1299,37 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
     showToast("Waiting list reordered");
   }
 
+  async function handleFollowUp(appointmentId) {
+    const suggestedFollowUpDate = window.prompt(
+      "Enter follow-up date (YYYY-MM-DD)",
+      new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    );
+
+    if (!suggestedFollowUpDate || !appointmentId) return;
+
+    try {
+      setUpdatingAppointmentId(appointmentId);
+      setError("");
+      await followUpAppointment(Number(appointmentId), suggestedFollowUpDate, token);
+      setInProgressAppointments((items) => items.filter((appointment) => appointment.id !== appointmentId));
+      showToast(`Follow-up scheduled for ${suggestedFollowUpDate}`);
+    } catch (err) {
+      setError(err.message || "Unable to schedule follow-up.");
+    } finally {
+      setUpdatingAppointmentId(null);
+    }
+  }
+
   async function changeStatus(appointmentId, nextStatus) {
     try {
       setUpdatingAppointmentId(appointmentId);
       setError("");
       const updated = await updateAppointmentStatus(appointmentId, nextStatus, token);
-      const currentAppointment = [...waitingAppointments, ...checkedInAppointments].find((appointment) => appointment.id === appointmentId);
+      const currentAppointment = [...inProgressAppointments, ...waitingAppointments].find((appointment) => appointment.id === appointmentId);
       const changedAppointment = { ...currentAppointment, ...(updated || {}), status: updated?.status || nextStatus };
+      setInProgressAppointments((items) => items.filter((appointment) => appointment.id !== appointmentId));
       setWaitingAppointments((items) => items.filter((appointment) => appointment.id !== appointmentId));
-      setCheckedInAppointments((items) => items.filter((appointment) => appointment.id !== appointmentId));
+      if (changedAppointment.status === "IN_PROGRESS") setInProgressAppointments((items) => [...items, changedAppointment]);
       if (changedAppointment.status === "WAITING") setWaitingAppointments((items) => [...items, changedAppointment]);
       showToast(`Appointment marked ${nextStatus.replaceAll("_", " ").toLowerCase()}`);
     } catch (err) {
@@ -1070,8 +1343,8 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
     <div className="queue-hero"><div><span className="queue-eyebrow">LIVE CLINIC FLOW</span><h2>Today&apos;s Appointment Queue</h2><p>Patients currently checked in or waiting for care.</p></div><div className="queue-count"><strong>{totalInQueue}</strong><span>in queue</span></div></div>
     {error && <div className="auth-error">{error}</div>}
     {loading && <div className="card queue-empty"><span className="queue-pulse" /><p>Loading the queue...</p></div>}
-    {!loading && !error && totalInQueue === 0 && <div className="card queue-empty"><div className="queue-empty-icon">✓</div><h3>Queue is clear</h3><p>No checked-in or waiting patients need attention right now.</p></div>}
-    {!loading && !error && totalInQueue > 0 && <div className="queue-columns"><QueueLane title="Waiting" subtitle="Ready for the doctor" appointments={visibleWaitingAppointments} actionLabel="Start Consultation" nextStatus="IN_PROGRESS" updatingAppointmentId={updatingAppointmentId} onStatusChange={changeStatus} isReorderable onReorder={reorderWaitingAppointments} draggedAppointmentId={draggedWaitingAppointmentId} setDraggedAppointmentId={setDraggedWaitingAppointmentId} /><QueueLane title="Checked In" subtitle="Recently arrived" appointments={visibleCheckedInAppointments} actionLabel="Mark Waiting" nextStatus="WAITING" updatingAppointmentId={updatingAppointmentId} onStatusChange={changeStatus} /></div>}
+    {!loading && !error && totalInQueue === 0 && <div className="card queue-empty"><div className="queue-empty-icon">✓</div><h3>Queue is clear</h3><p>No consultation or waiting patients need attention right now.</p></div>}
+    {!loading && !error && totalInQueue > 0 && <div className="queue-columns"><QueueLane title="Start Consultation" subtitle="Consultation in progress" appointments={visibleInProgressAppointments} actionLabel="Follow Up" nextStatus="FOLLOW_UP" updatingAppointmentId={updatingAppointmentId} onStatusChange={handleFollowUp} /><QueueLane title="Waiting" subtitle="Ready for the doctor" appointments={visibleWaitingAppointments} actionLabel="Start Consultation" nextStatus="IN_PROGRESS" updatingAppointmentId={updatingAppointmentId} onStatusChange={changeStatus} isReorderable onReorder={reorderWaitingAppointments} draggedAppointmentId={draggedWaitingAppointmentId} setDraggedAppointmentId={setDraggedWaitingAppointmentId} /></div>}
   </section>;
 }
 

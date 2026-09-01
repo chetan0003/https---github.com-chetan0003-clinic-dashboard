@@ -42,6 +42,18 @@ function unwrapApiData(payload) {
     return payload;
   }
 
+  if (payload && typeof payload === "object" && Array.isArray(payload.content)) {
+    const hasPaginationMeta =
+      payload.totalPages !== undefined ||
+      payload.totalElements !== undefined ||
+      payload.pageable !== undefined ||
+      payload.number !== undefined ||
+      payload.size !== undefined ||
+      payload.last !== undefined ||
+      payload.first !== undefined;
+    if (hasPaginationMeta) return payload;
+  }
+
   if (Array.isArray(payload.data)) return payload.data;
   if (Array.isArray(payload.clinic)) return payload.clinic;
   if (Array.isArray(payload.clinics)) return payload.clinics;
@@ -49,6 +61,15 @@ function unwrapApiData(payload) {
   if (Array.isArray(payload.items)) return payload.items;
 
   if (payload.data && typeof payload.data === "object") {
+    const hasPaginationMeta =
+      payload.data.totalPages !== undefined ||
+      payload.data.totalElements !== undefined ||
+      payload.data.pageable !== undefined ||
+      payload.data.number !== undefined ||
+      payload.data.size !== undefined ||
+      payload.data.last !== undefined ||
+      payload.data.first !== undefined;
+    if (hasPaginationMeta) return payload.data;
     if (Array.isArray(payload.data.clinic)) return payload.data.clinic;
     if (Array.isArray(payload.data.clinics)) return payload.data.clinics;
     if (Array.isArray(payload.data.content)) return payload.data.content;
@@ -174,12 +195,76 @@ export function getClinicProfiles(token) {
   }).then((payload) => unwrapApiData(payload));
 }
 
-export function getClinicPatients(clinicId, token) {
-  return request(`/api/dashboard/patient?clinicId=${clinicId}`, {
+export function getClinicPatients(clinicId, filters = {}, token) {
+  const query = new URLSearchParams();
+  if (filters.page !== undefined && filters.page !== null) query.set("page", String(filters.page));
+  if (filters.size) query.set("size", String(filters.size));
+
+  return request(`/api/dashboard/clinics/${clinicId}/patients?${query.toString()}`, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
-  }).then((payload) => unwrapApiData(payload));
+  }).then((payload) => {
+    const unwrapped = unwrapApiData(payload);
+    const list = Array.isArray(unwrapped)
+      ? unwrapped
+      : unwrapped && Array.isArray(unwrapped.content)
+        ? unwrapped.content
+        : [];
+
+    const pagination = unwrapped && typeof unwrapped === "object" && !Array.isArray(unwrapped)
+      ? {
+          pageNumber: unwrapped.pageNumber ?? unwrapped.number ?? 0,
+          pageSize: unwrapped.pageSize ?? unwrapped.size ?? list.length,
+          totalPages: unwrapped.totalPages ?? 0,
+          totalElements: unwrapped.totalElements ?? list.length,
+          number: unwrapped.number ?? unwrapped.pageNumber ?? 0,
+          size: unwrapped.size ?? unwrapped.pageSize ?? list.length,
+        }
+      : null;
+
+    if ((filters.page !== undefined && filters.page !== null) || filters.size) {
+      return { items: list, pagination };
+    }
+
+    return list;
+  });
+}
+
+export function searchClinicPatientsByQuery(clinicId, query, token) {
+  const params = new URLSearchParams();
+  if (query) params.set("query", query.trim());
+  const url = params.toString() ? `/api/dashboard/clinics/${clinicId}/patients/search?${params.toString()}` : `/api/dashboard/clinics/${clinicId}/patients/search`;
+
+  return request(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }).then((payload) => {
+    const data = unwrapApiData(payload);
+    return Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+  });
+}
+
+export function createClinicPatient(clinicId, payload, token) {
+  return request(`/api/dashboard/clinics/${clinicId}/patients`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      name: payload.name,
+      whatsappNumber: payload.whatsappNumber,
+      email: payload.email,
+      dateOfBirth: payload.dateOfBirth,
+    }),
+  }).then((response) => {
+    if (response && typeof response === "object") {
+      if (response.data && typeof response.data === "object") return response.data;
+      if (response.patient) return response.patient;
+    }
+    return response;
+  });
 }
 
 export function getClinicDashboard(clinicId, token) {
@@ -211,6 +296,29 @@ export function createClinicHoliday(clinicId, payload, token) {
   });
 }
 
+export function createClinicAppointment(clinicId, payload, token) {
+  return request(`/api/dashboard/clinics/${clinicId}/appointments`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      patientId: Number(payload.patientId),
+      doctorId: Number(payload.doctorId),
+      serviceId: Number(payload.serviceId),
+      appointmentDate: payload.appointmentDate,
+      startTime: payload.startTime,
+      endTime: payload.endTime,
+    }),
+  }).then((response) => {
+    if (response && typeof response === "object") {
+      if (response.data && typeof response.data === "object") return response.data;
+      if (response.appointment) return response.appointment;
+    }
+    return response;
+  });
+}
+
 export function getClinicAppointments(clinicId, filters, token) {
   const query = new URLSearchParams();
   if (filters.from) query.set("from", filters.from);
@@ -218,12 +326,38 @@ export function getClinicAppointments(clinicId, filters, token) {
   if (filters.doctorId) query.set("doctorId", filters.doctorId);
   if (filters.serviceId) query.set("serviceId", filters.serviceId);
   if (filters.status) query.set("status", filters.status);
+  if (filters.page !== undefined && filters.page !== null) query.set("page", String(filters.page));
+  if (filters.size) query.set("size", String(filters.size));
 
   return request(`/api/dashboard/clinics/${clinicId}/appointments?${query.toString()}`, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
-  }).then((payload) => unwrapApiData(payload));
+  }).then((payload) => {
+    const unwrapped = unwrapApiData(payload);
+    const list = Array.isArray(unwrapped)
+      ? unwrapped
+      : unwrapped && Array.isArray(unwrapped.content)
+        ? unwrapped.content
+        : [];
+
+    const pagination = unwrapped && typeof unwrapped === "object" && !Array.isArray(unwrapped)
+      ? {
+          pageNumber: unwrapped.pageNumber ?? unwrapped.number ?? 0,
+          pageSize: unwrapped.pageSize ?? unwrapped.size ?? list.length,
+          totalPages: unwrapped.totalPages ?? 0,
+          totalElements: unwrapped.totalElements ?? list.length,
+          number: unwrapped.number ?? unwrapped.pageNumber ?? 0,
+          size: unwrapped.size ?? unwrapped.pageSize ?? list.length,
+        }
+      : null;
+
+    if ((filters.page !== undefined && filters.page !== null) || filters.size) {
+      return { items: list, pagination };
+    }
+
+    return list;
+  });
 }
 
 export function updateAppointmentStatus(appointmentId, status, token) {
@@ -248,6 +382,22 @@ export function cancelAppointment(appointmentId, token) {
     headers: {
       Authorization: `Bearer ${token}`,
     },
+  }).then((payload) => {
+    if (payload && typeof payload === "object") {
+      if (payload.data && typeof payload.data === "object") return payload.data;
+      if (payload.appointment) return payload.appointment;
+    }
+    return payload;
+  });
+}
+
+export function followUpAppointment(appointmentId, suggestedFollowUpDate, token) {
+  return request(`/api/dashboard/appointments/${appointmentId}/follow-up`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ suggestedFollowUpDate }),
   }).then((payload) => {
     if (payload && typeof payload === "object") {
       if (payload.data && typeof payload.data === "object") return payload.data;
