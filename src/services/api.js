@@ -411,6 +411,27 @@ export function createNextAppointment(appointmentId, payload, token) {
   });
 }
 
+export function rescheduleAppointment(appointmentId, payload, token) {
+  return request(`/api/dashboard/appointments/${appointmentId}/reschedule`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      appointmentDate: payload.appointmentDate,
+      startTime: payload.startTime,
+      endTime: payload.endTime,
+      reason: payload.reason,
+    }),
+  }).then((response) => {
+    if (response && typeof response === "object") {
+      if (response.data && typeof response.data === "object") return response.data;
+      if (response.appointment) return response.appointment;
+    }
+    return response;
+  });
+}
+
 export function followUpAppointment(appointmentId, suggestedFollowUpDate, token) {
   return request(`/api/dashboard/appointments/${appointmentId}/follow-up`, {
     method: "PATCH",
