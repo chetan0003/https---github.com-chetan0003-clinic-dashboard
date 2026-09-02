@@ -1,7 +1,7 @@
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { cancelAppointment, createClinicAppointment, createClinicDoctor, createClinicHoliday, createClinicPatient, createClinicService, createClinicUser, followUpAppointment, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicHolidays, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorAvailability, getDoctorServices, getUserClinics, saveClinicProfile, saveDoctorAvailability, searchClinicPatientsByQuery, updateAppointmentStatus, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
+import { cancelAppointment, createClinicAppointment, createClinicDoctor, createClinicHoliday, createClinicPatient, createClinicService, createClinicUser, createNextAppointment, followUpAppointment, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicHolidays, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorAvailability, getDoctorServices, getUserClinics, saveClinicProfile, saveDoctorAvailability, searchClinicPatientsByQuery, updateAppointmentStatus, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
@@ -961,6 +961,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   const [error, setError] = useState("");
   const [updatingAppointmentId, setUpdatingAppointmentId] = useState(null);
   const [cancelingAppointmentId, setCancelingAppointmentId] = useState(null);
+  const [creatingNextAppointmentId, setCreatingNextAppointmentId] = useState(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(5);
   const [pagination, setPagination] = useState(null);
@@ -1103,6 +1104,34 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
     }
   }
 
+  async function handleCreateNextAppointment(appointment) {
+    if (!token || !appointment?.id) {
+      setError("Please log in to create the next appointment.");
+      return;
+    }
+
+    const appointmentDate = window.prompt("Enter next appointment date (YYYY-MM-DD)", new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+    if (!appointmentDate) return;
+
+    const startTime = window.prompt("Enter next appointment start time (HH:mm)", "10:30");
+    if (!startTime) return;
+
+    const endTime = window.prompt("Enter next appointment end time (HH:mm)", "11:00");
+    if (!endTime) return;
+
+    try {
+      setCreatingNextAppointmentId(appointment.id);
+      setError("");
+      const nextAppointment = await createNextAppointment(appointment.id, { appointmentDate, startTime, endTime }, token);
+      setRows((items) => items.map((item) => item.id === appointment.id ? { ...item, ...(nextAppointment || {}), followUpAppointmentId: nextAppointment?.id || item.followUpAppointmentId, suggestedFollowUpDate: item.suggestedFollowUpDate } : item));
+      showToast("Next appointment created");
+    } catch (err) {
+      setError(err.message || "Unable to create the next appointment.");
+    } finally {
+      setCreatingNextAppointmentId(null);
+    }
+  }
+
   function getAppointmentAction(appointment) {
     const appointmentStatus = String(appointment.status || "").toUpperCase();
     if (appointmentStatus === "CONFIRMED") {
@@ -1121,6 +1150,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   }
 
   const canCancelAppointment = (appointment) => String(appointment.status || "").toUpperCase() !== "CANCELLED";
+  const canCreateNextAppointment = (appointment) => String(appointment.status || "").toUpperCase() === "COMPLETED" && !appointment.followUpAppointmentId;
 
   return <section className="page active"><div className="card">
     <div className="card-header"><div><h3>Appointments</h3><p>Manage and monitor clinic appointments</p></div><button className="btn btn-primary" onClick={() => openModal("appointment")}>+ New Appointment</button></div>
@@ -1134,8 +1164,8 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
     {error && <div className="auth-error">{error}</div>}
     {loading && <div className="card-body"><p className="muted">Loading appointments...</p></div>}
     {!loading && !error && filteredRows.length === 0 && <div className="card-body"><p className="muted">No appointments found.</p></div>}
-    {!loading && !error && filteredRows.length > 0 && <div className="table-wrap"><table><thead><tr><th>Patient</th><th>Service</th><th>Doctor</th><th>Date</th><th>Time</th><th>Status</th><th>Action</th></tr></thead><tbody>
-      {filteredRows.map((appointment) => { const action = getAppointmentAction(appointment); const isUpdating = updatingAppointmentId === appointment.id; const isCancelling = cancelingAppointmentId === appointment.id; return <tr key={appointment.id}><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "-"}</strong><span>{appointment.phoneNo || appointment.patientPhone || "-"}</span></div></div></td><td>{appointment.serviceName || appointment.service?.name || "-"}</td><td>{appointment.doctorName || appointment.doctor?.name || "-"}</td><td>{appointment.appointmentDate || appointment.date || "-"}</td><td>{formatTime(appointment.startTime || appointment.time)}</td><td><span className={`status ${String(appointment.status || "").toLowerCase()}`}>{appointment.status || "-"}</span></td><td><div className="row-actions">{action && <button className="btn btn-light" disabled={isUpdating} onClick={() => handleStatusUpdate(appointment.id, action.nextStatus)}>{isUpdating ? "Updating..." : action.label}</button>}{canCancelAppointment(appointment) && <button className="btn btn-danger" disabled={isCancelling} onClick={() => handleCancelAppointment(appointment.id)}>{isCancelling ? "Cancelling..." : "Cancel"}</button>}</div></td></tr>; })}
+    {!loading && !error && filteredRows.length > 0 && <div className="table-wrap"><table><thead><tr><th>Patient</th><th>Service</th><th>Doctor</th><th>Date</th><th>Time</th><th>Status</th><th>Suggested Follow-Up</th><th>Action</th></tr></thead><tbody>
+      {filteredRows.map((appointment) => { const action = getAppointmentAction(appointment); const isUpdating = updatingAppointmentId === appointment.id; const isCancelling = cancelingAppointmentId === appointment.id; const isCreatingNext = creatingNextAppointmentId === appointment.id; return <tr key={appointment.id}><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "-"}</strong><span>{appointment.phoneNo || appointment.patientPhone || "-"}</span></div></div></td><td>{appointment.serviceName || appointment.service?.name || "-"}</td><td>{appointment.doctorName || appointment.doctor?.name || "-"}</td><td>{appointment.appointmentDate || appointment.date || "-"}</td><td>{formatTime(appointment.startTime || appointment.time)}</td><td><span className={`status ${String(appointment.status || "").toLowerCase()}`}>{appointment.status || "-"}</span></td><td>{appointment.suggestedFollowUpDate || "-"}</td><td><div className="row-actions">{action && <button className="btn btn-light" disabled={isUpdating} onClick={() => handleStatusUpdate(appointment.id, action.nextStatus)}>{isUpdating ? "Updating..." : action.label}</button>}{canCreateNextAppointment(appointment) && <button className="btn btn-light" disabled={isCreatingNext} onClick={() => handleCreateNextAppointment(appointment)}>{isCreatingNext ? "Creating..." : "Next Visit"}</button>}{canCancelAppointment(appointment) && <button className="btn btn-danger" disabled={isCancelling} onClick={() => handleCancelAppointment(appointment.id)}>{isCancelling ? "Cancelling..." : "Cancel"}</button>}</div></td></tr>; })}
     </tbody></table></div>}
     {!loading && !error && <div className="pagination">
       <button className="btn btn-light" disabled={page === 0} onClick={() => handlePageChange(-1)}>Previous</button>
