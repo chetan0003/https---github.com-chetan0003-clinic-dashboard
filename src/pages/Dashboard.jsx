@@ -1,7 +1,7 @@
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { cancelAppointment, createClinicAppointment, createClinicDoctor, createClinicHoliday, createClinicPatient, createClinicService, createClinicUser, createNextAppointment, followUpAppointment, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicHolidays, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorAvailability, getDoctorServices, getUserClinics, rescheduleAppointment, saveClinicProfile, saveDoctorAvailability, searchClinicPatientsByQuery, updateAppointmentStatus, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
+import { cancelAppointment, createClinicAppointment, createClinicDoctor, createClinicHoliday, createClinicPatient, createClinicService, createClinicUser, createNextAppointment, deleteClinicDoctor, deleteClinicService, followUpAppointment, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicHolidays, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorAvailability, getDoctorServices, getUserClinics, rescheduleAppointment, saveClinicProfile, saveDoctorAvailability, searchClinicPatientsByQuery, updateAppointmentStatus, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
@@ -1202,7 +1202,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
     {loading && <div className="card-body"><p className="muted">Loading appointments...</p></div>}
     {!loading && !error && filteredRows.length === 0 && <div className="card-body"><p className="muted">No appointments found.</p></div>}
     {!loading && !error && filteredRows.length > 0 && <div className="table-wrap"><table><thead><tr><th>Patient</th><th>Service</th><th>Doctor</th><th>Date</th><th>Time</th><th>Status</th><th>Suggested Follow-Up</th><th>Action</th></tr></thead><tbody>
-      {filteredRows.map((appointment) => { const action = getAppointmentAction(appointment); const isUpdating = updatingAppointmentId === appointment.id; const isCancelling = cancelingAppointmentId === appointment.id; const isCreatingNext = creatingNextAppointmentId === appointment.id; const isRescheduling = reschedulingAppointmentId === appointment.id; return <tr key={appointment.id}><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "-"}</strong><span>{appointment.phoneNo || appointment.patientPhone || "-"}</span></div></div></td><td>{appointment.serviceName || appointment.service?.name || "-"}</td><td>{appointment.doctorName || appointment.doctor?.name || "-"}</td><td>{appointment.appointmentDate || appointment.date || "-"}</td><td>{formatTime(appointment.startTime || appointment.time)}</td><td><span className={`status ${String(appointment.status || "").toLowerCase()}`}>{appointment.status || "-"}</span></td><td>{appointment.suggestedFollowUpDate || "-"}</td><td><div className="row-actions">{action && <button className="btn btn-light" disabled={isUpdating} onClick={() => handleStatusUpdate(appointment.id, action.nextStatus)}>{isUpdating ? "Updating..." : action.label}</button>}{canCreateNextAppointment(appointment) && <button className="btn btn-light" disabled={isCreatingNext} onClick={() => handleCreateNextAppointment(appointment)}>{isCreatingNext ? "Creating..." : "Next Visit"}</button>}<button className="btn btn-light" disabled={isRescheduling} onClick={() => handleRescheduleAppointment(appointment)}>{isRescheduling ? "Rescheduling..." : "Reschedule"}</button>{canCancelAppointment(appointment) && <button className="btn btn-danger" disabled={isCancelling} onClick={() => handleCancelAppointment(appointment.id)}>{isCancelling ? "Cancelling..." : "Cancel"}</button>}</div></td></tr>; })}
+      {filteredRows.map((appointment) => { const action = getAppointmentAction(appointment); const isUpdating = updatingAppointmentId === appointment.id; const isCancelling = cancelingAppointmentId === appointment.id; const isCreatingNext = creatingNextAppointmentId === appointment.id; const isRescheduling = reschedulingAppointmentId === appointment.id; return <tr key={appointment.id}><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "-"}</strong><span>{appointment.phoneNo || appointment.patientPhone || "-"}</span></div></div></td><td>{appointment.serviceName || appointment.service?.name || "-"}</td><td>{appointment.doctorName || appointment.doctor?.name || "-"}</td><td>{appointment.appointmentDate || appointment.date || "-"}</td><td>{formatTime(appointment.startTime || appointment.time)}</td><td><span className={`status ${String(appointment.status || "").toLowerCase()}`}>{appointment.status || "-"}</span></td><td>{appointment.suggestedFollowUpDate || "-"}</td><td><div className="row-actions">{action && <button className="btn btn-light icon-btn" title={isUpdating ? "Updating..." : action.label} disabled={isUpdating} onClick={() => handleStatusUpdate(appointment.id, action.nextStatus)} aria-label={isUpdating ? "Updating..." : action.label}>{isUpdating ? "…" : action.label === "Mark Completed" ? "✓" : "→"}</button>}{canCreateNextAppointment(appointment) && <button className="btn btn-light icon-btn" title={isCreatingNext ? "Creating..." : "Next Visit"} disabled={isCreatingNext} onClick={() => handleCreateNextAppointment(appointment)} aria-label={isCreatingNext ? "Creating..." : "Next Visit"}>{isCreatingNext ? "…" : "+"}</button>}<button className="btn btn-light icon-btn" title={isRescheduling ? "Rescheduling..." : "Reschedule"} disabled={isRescheduling} onClick={() => handleRescheduleAppointment(appointment)} aria-label={isRescheduling ? "Rescheduling..." : "Reschedule"}>{isRescheduling ? "…" : "↺"}</button>{canCancelAppointment(appointment) && <button className="btn btn-danger icon-btn" title={isCancelling ? "Cancelling..." : "Cancel"} disabled={isCancelling} onClick={() => handleCancelAppointment(appointment.id)} aria-label={isCancelling ? "Cancelling..." : "Cancel"}>{isCancelling ? "…" : "✕"}</button>}</div></td></tr>; })}
     </tbody></table></div>}
     {!loading && !error && <div className="pagination">
       <button className="btn btn-light" disabled={page === 0} onClick={() => handlePageChange(-1)}>Previous</button>
@@ -1445,6 +1445,11 @@ function Doctors({ openModal, showToast, clinicId, token, refreshKey, onEdit }) 
   const [doctors, setDoctors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selectedDoctor, setSelectedDoctor] = useState(null);
+  const [doctorServices, setDoctorServices] = useState([]);
+  const [doctorServicesLoading, setDoctorServicesLoading] = useState(false);
+  const [doctorProfileError, setDoctorProfileError] = useState("");
+  const [deletingDoctorId, setDeletingDoctorId] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -1473,6 +1478,51 @@ function Doctors({ openModal, showToast, clinicId, token, refreshKey, onEdit }) 
     return () => { cancelled = true; };
   }, [clinicId, token, refreshKey]);
 
+  async function openDoctorProfile(doctor) {
+    if (!doctor || !token || !clinicId) {
+      setDoctorProfileError("Unable to load profile details.");
+      return;
+    }
+
+    try {
+      setSelectedDoctor(doctor);
+      setDoctorProfileError("");
+      setDoctorServicesLoading(true);
+      const serviceResult = await getClinicServices(clinicId, token, String(doctor.id));
+      setDoctorServices(Array.isArray(serviceResult) ? serviceResult : []);
+    } catch (err) {
+      setDoctorServices([]);
+      setDoctorProfileError(err.message || "Unable to load doctor profile.");
+    } finally {
+      setDoctorServicesLoading(false);
+    }
+  }
+
+  async function handleDeleteDoctor(doctorId) {
+    if (!token || !clinicId) {
+      setError("Unable to delete doctor.");
+      return;
+    }
+
+    const confirmed = window.confirm("Are you sure you want to delete this doctor?");
+    if (!confirmed) return;
+
+    try {
+      setDeletingDoctorId(doctorId);
+      setError("");
+      await deleteClinicDoctor(clinicId, doctorId, token);
+      setDoctors((items) => items.filter((doctor) => String(doctor.id) !== String(doctorId)));
+      if (selectedDoctor && String(selectedDoctor.id) === String(doctorId)) {
+        setSelectedDoctor(null);
+      }
+      showToast("Doctor deleted successfully");
+    } catch (err) {
+      setError(err.message || "Unable to delete doctor.");
+    } finally {
+      setDeletingDoctorId(null);
+    }
+  }
+
   return <section className="page active"><div className="card">
     <div className="card-header"><div><h3>Doctors</h3><p>Doctors registered with this clinic</p></div><button className="btn btn-primary" onClick={() => { onEdit(null); openModal("doctor"); }}>+ Add Doctor</button></div>
     <div className="card-body">
@@ -1482,9 +1532,56 @@ function Doctors({ openModal, showToast, clinicId, token, refreshKey, onEdit }) 
       {!loading && !error && <div className="grid-3">{doctors.map((doctor) => <div className="card profile-card" key={doctor.id}>
       <div className="doctor-head"><div className="doctor-avatar">{initials({ firstName: doctor.name })}</div><div><div className="doctor-name">{doctor.name}</div><div className="doctor-speciality">{doctor.specialization}</div></div></div>
       <InfoLine left="Status" right={doctor.isActive ? "Active" : "Inactive"} positive={doctor.isActive} />
-      <div className="quick-actions"><button className="btn btn-light" onClick={() => showToast("Doctor profile opened")}>View Profile</button><button className="btn btn-outline" onClick={() => onEdit(doctor)}>Edit</button></div>
+      <div className="quick-actions"><button className="btn btn-light icon-btn" title="View profile" onClick={() => openDoctorProfile(doctor)} aria-label="View profile">👁</button><button className="btn btn-outline icon-btn" title="Edit doctor" onClick={() => onEdit(doctor)} aria-label="Edit doctor">✎</button><button className="btn btn-danger icon-btn" title="Delete doctor" disabled={deletingDoctorId === doctor.id} onClick={() => handleDeleteDoctor(doctor.id)} aria-label="Delete doctor">{deletingDoctorId === doctor.id ? "…" : "🗑"}</button></div>
     </div>)}</div>}
     </div>
+    {selectedDoctor && (
+      <div className="modal-backdrop open" onMouseDown={(e) => e.target === e.currentTarget && setSelectedDoctor(null)}>
+        <div className="modal" style={{ maxWidth: 560 }}>
+          <div className="modal-header">
+            <h3>Doctor Profile</h3>
+            <button className="close" onClick={() => setSelectedDoctor(null)}>×</button>
+          </div>
+          <div className="modal-body">
+            <div className="card profile-card" style={{ padding: 18, marginBottom: 16 }}>
+              <div className="doctor-head" style={{ marginBottom: 12 }}>
+                <div className="doctor-avatar" style={{ width: 52, height: 52 }}>{initials({ firstName: selectedDoctor.name })}</div>
+                <div>
+                  <div className="doctor-name" style={{ fontSize: 22 }}>{selectedDoctor.name}</div>
+                  <div className="doctor-speciality">{selectedDoctor.specialization || "Doctor"}</div>
+                </div>
+              </div>
+
+              <div className="info-line" style={{ marginBottom: 10 }}><span>Doctor ID</span><strong>{selectedDoctor.id}</strong></div>
+              <div className="info-line" style={{ marginBottom: 10 }}><span>Status</span><strong className={selectedDoctor.isActive ? "up" : ""}>{selectedDoctor.isActive ? "Active" : "Inactive"}</strong></div>
+              <div className="info-line" style={{ marginBottom: 0 }}><span>Clinic ID</span><strong>{clinicId}</strong></div>
+            </div>
+
+            <div>
+              <h4 style={{ margin: "0 0 12px" }}>Assigned Services</h4>
+              {doctorServicesLoading && <p className="muted">Loading services...</p>}
+              {!doctorServicesLoading && doctorProfileError && <div className="auth-error">{doctorProfileError}</div>}
+              {!doctorServicesLoading && !doctorProfileError && doctorServices.length === 0 && <p className="muted">No services assigned to this doctor.</p>}
+              {!doctorServicesLoading && !doctorProfileError && doctorServices.length > 0 && (
+                <div className="grid-2">
+                  {doctorServices.map((service) => (
+                    <div key={service.id} className="card profile-card" style={{ padding: 12 }}>
+                      <div className="doctor-name" style={{ fontSize: 16, marginBottom: 6 }}>{service.name}</div>
+                      <div className="doctor-speciality">{service.durationMinutes || "-"} minutes</div>
+                      <div className="doctor-speciality">Price: ₹{Number(service.price || 0).toFixed(2)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-outline" onClick={() => setSelectedDoctor(null)}>Close</button>
+            <button className="btn btn-primary" onClick={() => { onEdit(selectedDoctor); setSelectedDoctor(null); }}>Edit Doctor</button>
+          </div>
+        </div>
+      </div>
+    )}
   </div></section>;
 }
 
@@ -1492,6 +1589,7 @@ function Services({ openModal, showToast, clinicId, token, doctorId, refreshKey 
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [deletingServiceId, setDeletingServiceId] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -1520,6 +1618,28 @@ function Services({ openModal, showToast, clinicId, token, doctorId, refreshKey 
     return () => { cancelled = true; };
   }, [clinicId, token, doctorId, refreshKey]);
 
+  async function handleDeleteService(serviceId) {
+    if (!token || !clinicId) {
+      setError("Unable to delete service.");
+      return;
+    }
+
+    const confirmed = window.confirm("Are you sure you want to delete this service?");
+    if (!confirmed) return;
+
+    try {
+      setDeletingServiceId(serviceId);
+      setError("");
+      await deleteClinicService(clinicId, serviceId, token);
+      setServices((items) => items.filter((service) => String(service.id) !== String(serviceId)));
+      showToast("Service deleted successfully");
+    } catch (err) {
+      setError(err.message || "Unable to delete service.");
+    } finally {
+      setDeletingServiceId(null);
+    }
+  }
+
   return <section className="page active"><div className="card">
     <div className="card-header"><div><h3>Services</h3><p>Services offered by this clinic</p></div><button className="btn btn-primary" onClick={() => openModal("service")}>+ Add Service</button></div>
     <div className="card-body">
@@ -1529,7 +1649,10 @@ function Services({ openModal, showToast, clinicId, token, doctorId, refreshKey 
       {!loading && !error && <div className="grid-3">{services.map((service) => <div className="card profile-card" key={service.id}>
       <div className="doctor-head"><div className="service-icon">✚</div><div><div className="doctor-name">{service.name}</div><div className="doctor-speciality">{service.durationMinutes} minutes</div></div></div>
       <InfoLine left="Price" right={`₹${Number(service.price).toFixed(2)}`} />
-      <button className="btn btn-light full-btn" onClick={() => showToast("Service details opened")}>Manage</button>
+      <div className="quick-actions" style={{ marginTop: 12 }}>
+        <button className="btn btn-light icon-btn" title="Manage service" onClick={() => showToast("Service details opened")}>⚙</button>
+        <button className="btn btn-danger icon-btn" title="Delete service" disabled={deletingServiceId === service.id} onClick={() => handleDeleteService(service.id)}>{deletingServiceId === service.id ? "…" : "🗑"}</button>
+      </div>
     </div>)}</div>}
     </div>
   </div></section>;
@@ -1616,6 +1739,8 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
   ];
   const [doctorAvailabilitySaving, setDoctorAvailabilitySaving] = useState(false);
   const [doctorAvailability, setDoctorAvailability] = useState(defaultDoctorAvailability);
+  const [availableDoctors, setAvailableDoctors] = useState([]);
+  const [selectedDoctorId, setSelectedDoctorId] = useState(String(doctorId || ""));
   const [workingHours, setWorkingHours] = useState([
     { day: "MONDAY", active: true, start: "09:00", end: "19:00", breakStart: "13:00", breakEnd: "14:00" },
     { day: "TUESDAY", active: true, start: "09:00", end: "19:00", breakStart: "13:00", breakEnd: "14:00" },
@@ -1655,6 +1780,37 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
     loadClinics();
     return () => { cancelled = true; };
   }, [token, canViewClinicProfile]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAvailableDoctors() {
+      if (!token || !clinicId) {
+        setAvailableDoctors([]);
+        setSelectedDoctorId("");
+        return;
+      }
+
+      try {
+        const result = await getClinicDoctors(clinicId, token);
+        const doctors = Array.isArray(result) ? result : [];
+        if (!cancelled) {
+          setAvailableDoctors(doctors);
+          setSelectedDoctorId((currentId) => doctors.some((doctor) => String(doctor.id) === String(currentId))
+            ? currentId
+            : String(doctors[0]?.id || ""));
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setAvailableDoctors([]);
+          setSelectedDoctorId("");
+        }
+      }
+    }
+
+    loadAvailableDoctors();
+    return () => { cancelled = true; };
+  }, [clinicId, token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1731,7 +1887,7 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
 
     loadDoctorAvailabilitySchedule();
     return () => { cancelled = true; };
-  }, [clinicId, doctorId, token]);
+  }, [clinicId, selectedDoctorId, token]);
 
   async function handleSave() {
     if (!token) {
@@ -1843,7 +1999,7 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
       return;
     }
 
-    const targetDoctorId = Number(doctorId || 1);
+    const targetDoctorId = Number(selectedDoctorId);
     if (!targetDoctorId) {
       setError("Please select a valid doctor before saving availability.");
       return;
@@ -1921,6 +2077,15 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
       <div className="mt">
         <h3>Doctor Availability</h3>
         <p className="muted">Set the doctor’s schedule for each day of the week.</p>
+        <div className="form-grid mt">
+          <div className="field">
+            <label>Doctor</label>
+            <select value={selectedDoctorId} onChange={(e) => setSelectedDoctorId(e.target.value)} disabled={availableDoctors.length === 0}>
+              <option value="">{availableDoctors.length === 0 ? "No doctors available" : "Select doctor"}</option>
+              {availableDoctors.map((doctor) => <option key={doctor.id} value={doctor.id}>{doctor.name}</option>)}
+            </select>
+          </div>
+        </div>
         <div className="working-hours-list">
           {doctorAvailability.map((slot, index) => <div className={`working-hour-row ${slot.active ? "" : "disabled"}`} key={slot.day}>
             <label className="day-toggle"><input type="checkbox" checked={slot.active} onChange={(e) => setDoctorAvailability((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, active: e.target.checked } : item))} /><strong>{slot.day}</strong></label>

@@ -137,6 +137,21 @@ export function updateClinicDoctor(clinicId, doctorId, payload, token) {
   });
 }
 
+export function deleteClinicDoctor(clinicId, doctorId, token) {
+  return request(`/api/dashboard/clinics/${clinicId}/doctors/${doctorId}/delete`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }).then((response) => {
+    if (response && typeof response === "object") {
+      if (response.data && typeof response.data === "object") return response.data;
+      if (response.doctor) return response.doctor;
+    }
+    return response;
+  });
+}
+
 export function getDoctorServices(clinicId, token) {
   return request(`/api/n8n/clinics/${clinicId}/services`, {
     headers: {
@@ -168,6 +183,21 @@ export function createClinicService(clinicId, payload, token) {
       if (payload.services) return payload.services;
     }
     return payload;
+  });
+}
+
+export function deleteClinicService(clinicId, serviceId, token) {
+  return request(`/api/dashboard/clinics/${clinicId}/services/${serviceId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }).then((response) => {
+    if (response && typeof response === "object") {
+      if (response.data && typeof response.data === "object") return response.data;
+      if (response.service) return response.service;
+    }
+    return response;
   });
 }
 
