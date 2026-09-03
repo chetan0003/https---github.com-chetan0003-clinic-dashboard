@@ -1,7 +1,7 @@
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { cancelAppointment, createClinicAppointment, createClinicDoctor, createClinicHoliday, createClinicPatient, createClinicService, createClinicUser, createNextAppointment, deleteClinicDoctor, deleteClinicService, followUpAppointment, getClinicAppointments, getClinicDashboard, getClinicDoctors, getClinicHolidays, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorAvailability, getDoctorServices, getUserClinics, rescheduleAppointment, saveClinicProfile, saveDoctorAvailability, searchClinicPatientsByQuery, updateAppointmentStatus, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
+import { cancelAppointment, createClinicAppointment, createClinicDoctor, createClinicHoliday, createClinicPatient, createClinicService, createClinicUser, createNextAppointment, deleteClinicDoctor, deleteClinicService, followUpAppointment, getClinicAppointments, getClinicAvailableSlots, getClinicDashboard, getClinicDoctors, getClinicHolidays, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUsers, getDoctorAvailability, getDoctorServices, getPatientAppointmentHistory, getUserClinics, rescheduleAppointment, saveClinicProfile, saveDoctorAvailability, searchClinicPatientsByQuery, updateAppointmentStatus, updateClinicDoctor, updateClinicProfile, upsertClinicWorkingHours } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
@@ -35,6 +35,18 @@ function formatTime(time) {
   const suffix = hours >= 12 ? "PM" : "AM";
   const displayHours = hours % 12 || 12;
   return `${String(displayHours).padStart(2, "0")}:${String(minutes).padStart(2, "0")} ${suffix}`;
+}
+
+function normalizeTime(time) {
+  return time ? String(time).slice(0, 5) : "";
+}
+
+function addMinutesToTime(time, minutes) {
+  if (!time || !Number.isFinite(Number(minutes))) return "";
+  const [hours, mins] = time.split(":").map(Number);
+  const totalMinutes = hours * 60 + mins + Number(minutes);
+  const normalizedMinutes = ((totalMinutes % 1440) + 1440) % 1440;
+  return `${String(Math.floor(normalizedMinutes / 60)).padStart(2, "0")}:${String(normalizedMinutes % 60).padStart(2, "0")}`;
 }
 
 function Modal({ title, children, onClose, onSave, saveLabel = "Save", saveDisabled = false }) {
@@ -88,6 +100,8 @@ export default function Dashboard() {
   const [appointmentPatientLoading, setAppointmentPatientLoading] = useState(false);
   const [appointmentDoctors, setAppointmentDoctors] = useState([]);
   const [appointmentServices, setAppointmentServices] = useState([]);
+  const [appointmentSlots, setAppointmentSlots] = useState([]);
+  const [appointmentSlotsLoading, setAppointmentSlotsLoading] = useState(false);
   const [appointmentLoading, setAppointmentLoading] = useState(false);
   const [appointmentError, setAppointmentError] = useState("");
   const [serviceForm, setServiceForm] = useState({ name: "", durationMinutes: "30", price: "" });
@@ -250,6 +264,32 @@ export default function Dashboard() {
     loadAppointmentOptions();
     return () => { cancelled = true; };
   }, [modal, selectedClinicId, token]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAppointmentSlots() {
+      const { doctorId, serviceId, appointmentDate } = appointmentForm;
+      if (modal !== "appointment" || !token || !selectedClinicId || !doctorId || !serviceId || !appointmentDate) {
+        setAppointmentSlots([]);
+        setAppointmentSlotsLoading(false);
+        return;
+      }
+
+      try {
+        setAppointmentSlotsLoading(true);
+        const slots = await getClinicAvailableSlots(selectedClinicId, doctorId, serviceId, appointmentDate, token);
+        if (!cancelled) setAppointmentSlots(slots);
+      } catch (err) {
+        if (!cancelled) setAppointmentSlots([]);
+      } finally {
+        if (!cancelled) setAppointmentSlotsLoading(false);
+      }
+    }
+
+    loadAppointmentSlots();
+    return () => { cancelled = true; };
+  }, [modal, selectedClinicId, token, appointmentForm.doctorId, appointmentForm.serviceId, appointmentForm.appointmentDate]);
 
   function showToast(message) {
     setToast(message);
@@ -492,7 +532,7 @@ export default function Dashboard() {
             </div>
             <div className="field">
               <label>Service *</label>
-              <select value={appointmentForm.serviceId} onChange={(e) => setAppointmentForm((value) => ({ ...value, serviceId: e.target.value }))} disabled={appointmentServices.length === 0}>
+              <select value={appointmentForm.serviceId} onChange={(e) => setAppointmentForm((value) => ({ ...value, serviceId: e.target.value, startTime: "", endTime: "" }))} disabled={appointmentServices.length === 0}>
                 <option value="">{appointmentServices.length === 0 ? "No services available" : "Select service"}</option>
                 {appointmentServices.map((service) => (
                   <option key={service.id} value={service.id}>{service.name}</option>
@@ -501,21 +541,29 @@ export default function Dashboard() {
             </div>
             <div className="field">
               <label>Doctor *</label>
-              <select value={appointmentForm.doctorId} onChange={(e) => setAppointmentForm((value) => ({ ...value, doctorId: e.target.value }))} disabled={appointmentDoctors.length === 0}>
+              <select value={appointmentForm.doctorId} onChange={(e) => setAppointmentForm((value) => ({ ...value, doctorId: e.target.value, startTime: "", endTime: "" }))} disabled={appointmentDoctors.length === 0}>
                 <option value="">{appointmentDoctors.length === 0 ? "No doctors available" : "Select doctor"}</option>
                 {appointmentDoctors.map((doctor) => (
                   <option key={doctor.id} value={doctor.id}>{doctor.name}</option>
                 ))}
               </select>
             </div>
-            <Field label="Date *" type="date" value={appointmentForm.appointmentDate} onChange={(e) => setAppointmentForm((value) => ({ ...value, appointmentDate: e.target.value }))} />
+            <Field label="Date *" type="date" value={appointmentForm.appointmentDate} onChange={(e) => setAppointmentForm((value) => ({ ...value, appointmentDate: e.target.value, startTime: "", endTime: "" }))} />
             <div className="field">
-              <label>Start Time *</label>
-              <input type="time" value={appointmentForm.startTime} onChange={(e) => setAppointmentForm((value) => ({ ...value, startTime: e.target.value }))} />
+              <label>Available Slot *</label>
+              <select value={appointmentForm.startTime} onChange={(e) => {
+                const startTime = normalizeTime(e.target.value);
+                const selectedService = appointmentServices.find((service) => String(service.id) === String(appointmentForm.serviceId));
+                const duration = Number(selectedService?.durationMinutes || 30);
+                setAppointmentForm((value) => ({ ...value, startTime, endTime: addMinutesToTime(startTime, duration) }));
+              }} disabled={appointmentSlotsLoading || appointmentSlots.length === 0}>
+                <option value="">{appointmentSlotsLoading ? "Loading available slots..." : appointmentSlots.length === 0 ? "No slots available" : "Select available slot"}</option>
+                {appointmentSlots.map((slot) => <option key={slot} value={normalizeTime(slot)}>{formatTime(normalizeTime(slot))}</option>)}
+              </select>
             </div>
             <div className="field">
               <label>End Time *</label>
-              <input type="time" value={appointmentForm.endTime} onChange={(e) => setAppointmentForm((value) => ({ ...value, endTime: e.target.value }))} />
+              <input type="time" value={appointmentForm.endTime} readOnly />
             </div>
           </div>
           {appointmentError && <div className="auth-error" style={{ marginTop: 12 }}>{appointmentError}</div>}
@@ -963,10 +1011,43 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   const [cancelingAppointmentId, setCancelingAppointmentId] = useState(null);
   const [creatingNextAppointmentId, setCreatingNextAppointmentId] = useState(null);
   const [reschedulingAppointmentId, setReschedulingAppointmentId] = useState(null);
+  const [scheduleModal, setScheduleModal] = useState(null);
+  const [scheduleSlots, setScheduleSlots] = useState([]);
+  const [scheduleSlotsLoading, setScheduleSlotsLoading] = useState(false);
+  const [scheduleError, setScheduleError] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(5);
   const [pagination, setPagination] = useState(null);
   const isDoctor = String(userRole).toUpperCase() === "DOCTOR";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadScheduleSlots() {
+      if (!scheduleModal || !token || !clinicId || !scheduleModal.doctorId || !scheduleModal.serviceId || !scheduleModal.appointmentDate) {
+        setScheduleSlots([]);
+        setScheduleSlotsLoading(false);
+        return;
+      }
+
+      try {
+        setScheduleSlotsLoading(true);
+        setScheduleError("");
+        const slots = await getClinicAvailableSlots(clinicId, scheduleModal.doctorId, scheduleModal.serviceId, scheduleModal.appointmentDate, token);
+        if (!cancelled) setScheduleSlots(slots);
+      } catch (err) {
+        if (!cancelled) {
+          setScheduleSlots([]);
+          setScheduleError(err.message || "Unable to load available slots.");
+        }
+      } finally {
+        if (!cancelled) setScheduleSlotsLoading(false);
+      }
+    }
+
+    loadScheduleSlots();
+    return () => { cancelled = true; };
+  }, [scheduleModal, clinicId, token]);
 
   useEffect(() => {
     if (isDoctor) setDoctorId(userDoctorId ? String(userDoctorId) : "");
@@ -989,7 +1070,6 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
         doctorId: isDoctor ? userDoctorId : doctorId,
         serviceId,
         status,
-        page: nextPage,
         size: pageSize,
       }, token);
 
@@ -1097,12 +1177,12 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
       setRows((items) => items.map((appointment) => appointment.id === appointmentId
         ? { ...appointment, ...(updatedAppointment || {}), status: updatedAppointment?.status || "CANCELLED" }
         : appointment));
-      showToast("Appointment cancelled");
     } catch (err) {
       setError(err.message || "Unable to cancel appointment.");
     } finally {
       setCancelingAppointmentId(null);
     }
+    showToast("Appointment cancelled");
   }
 
   async function handleCreateNextAppointment(appointment) {
@@ -1111,26 +1191,18 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
       return;
     }
 
-    const appointmentDate = window.prompt("Enter next appointment date (YYYY-MM-DD)", new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
-    if (!appointmentDate) return;
-
-    const startTime = window.prompt("Enter next appointment start time (HH:mm)", "10:30");
-    if (!startTime) return;
-
-    const endTime = window.prompt("Enter next appointment end time (HH:mm)", "11:00");
-    if (!endTime) return;
-
-    try {
-      setCreatingNextAppointmentId(appointment.id);
-      setError("");
-      const nextAppointment = await createNextAppointment(appointment.id, { appointmentDate, startTime, endTime }, token);
-      setRows((items) => items.map((item) => item.id === appointment.id ? { ...item, ...(nextAppointment || {}), followUpAppointmentId: nextAppointment?.id || item.followUpAppointmentId, suggestedFollowUpDate: item.suggestedFollowUpDate } : item));
-      showToast("Next appointment created");
-    } catch (err) {
-      setError(err.message || "Unable to create the next appointment.");
-    } finally {
-      setCreatingNextAppointmentId(null);
-    }
+    setScheduleError("");
+    setScheduleSlots([]);
+    setScheduleModal({
+      mode: "next",
+      appointment,
+      doctorId: appointment.doctorId,
+      serviceId: appointment.serviceId,
+      appointmentDate: appointment.suggestedFollowUpDate || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+      startTime: "",
+      endTime: "",
+      reason: "",
+    });
   }
 
   async function handleRescheduleAppointment(appointment) {
@@ -1139,32 +1211,58 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
       return;
     }
 
-    const appointmentDate = window.prompt("Enter new appointment date (YYYY-MM-DD)", appointment.appointmentDate || new Date().toISOString().slice(0, 10));
-    if (!appointmentDate) return;
+    setScheduleError("");
+    setScheduleSlots([]);
+    setScheduleModal({
+      mode: "reschedule",
+      appointment,
+      doctorId: appointment.doctorId,
+      serviceId: appointment.serviceId,
+      appointmentDate: appointment.appointmentDate || new Date().toISOString().slice(0, 10),
+      startTime: "",
+      endTime: "",
+      reason: "Patient requested a different time",
+    });
+  }
 
-    const startTime = window.prompt("Enter new start time (HH:mm)", appointment.startTime ? appointment.startTime.slice(0, 5) : "10:30");
-    if (!startTime) return;
+  async function handleScheduleSave() {
+    if (!scheduleModal?.startTime || !scheduleModal.endTime) {
+      setScheduleError("Please select an available slot.");
+      return;
+    }
 
-    const endTime = window.prompt("Enter new end time (HH:mm)", appointment.endTime ? appointment.endTime.slice(0, 5) : "11:00");
-    if (!endTime) return;
-
-    const reason = window.prompt("Enter reschedule reason", "Patient requested a different time");
-    if (reason === null) return;
-
+    const appointmentId = scheduleModal.appointment.id;
     try {
-      setReschedulingAppointmentId(appointment.id);
-      setError("");
-      const updatedAppointment = await rescheduleAppointment(appointment.id, {
-        appointmentDate,
-        startTime,
-        endTime,
-        reason: reason || "Patient requested a different time",
-      }, token);
-      setRows((items) => items.map((item) => item.id === appointment.id ? { ...item, ...(updatedAppointment || {}), appointmentDate: updatedAppointment?.appointmentDate || item.appointmentDate, startTime: updatedAppointment?.startTime || item.startTime, endTime: updatedAppointment?.endTime || item.endTime } : item));
-      showToast("Appointment rescheduled");
+      setScheduleError("");
+      if (scheduleModal.mode === "next") {
+        setCreatingNextAppointmentId(appointmentId);
+        const nextAppointment = await createNextAppointment(appointmentId, {
+          appointmentDate: scheduleModal.appointmentDate,
+          startTime: scheduleModal.startTime,
+          endTime: scheduleModal.endTime,
+        }, token);
+        setRows((items) => items.map((item) => item.id === appointmentId
+          ? { ...item, ...(nextAppointment || {}), followUpAppointmentId: nextAppointment?.id || item.followUpAppointmentId }
+          : item));
+        showToast("Next appointment created");
+      } else {
+        setReschedulingAppointmentId(appointmentId);
+        const updatedAppointment = await rescheduleAppointment(appointmentId, {
+          appointmentDate: scheduleModal.appointmentDate,
+          startTime: scheduleModal.startTime,
+          endTime: scheduleModal.endTime,
+          reason: scheduleModal.reason || "Patient requested a different time",
+        }, token);
+        setRows((items) => items.map((item) => item.id === appointmentId
+          ? { ...item, ...(updatedAppointment || {}), appointmentDate: updatedAppointment?.appointmentDate || scheduleModal.appointmentDate, startTime: updatedAppointment?.startTime || scheduleModal.startTime, endTime: updatedAppointment?.endTime || scheduleModal.endTime }
+          : item));
+        showToast("Appointment rescheduled");
+      }
+      setScheduleModal(null);
     } catch (err) {
-      setError(err.message || "Unable to reschedule appointment.");
+      setScheduleError(err.message || "Unable to save appointment schedule.");
     } finally {
+      setCreatingNextAppointmentId(null);
       setReschedulingAppointmentId(null);
     }
   }
@@ -1178,31 +1276,33 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
       return { label: "Mark Waiting", nextStatus: "WAITING" };
     }
     if (appointmentStatus === "WAITING") {
-      return { label: "Start Consultation", nextStatus: "IN_PROGRESS" };
+      return { label: "Start Consultation", nextStatus: "IN_CONSULTATION" };
     }
-    if (appointmentStatus === "IN_PROGRESS") {
+    if (appointmentStatus === "IN_CONSULTATION") {
       return { label: "Mark Completed", nextStatus: "COMPLETED" };
     }
     return null;
   }
 
   const canCancelAppointment = (appointment) => String(appointment.status || "").toUpperCase() !== "CANCELLED";
+  const canMarkNoShow = (appointment) => String(appointment.status || "").toUpperCase() === "CHECKED_IN";
   const canCreateNextAppointment = (appointment) => String(appointment.status || "").toUpperCase() === "COMPLETED" && !appointment.followUpAppointmentId;
 
-  return <section className="page active"><div className="card">
+  return <>
+  <section className="page active"><div className="card">
     <div className="card-header"><div><h3>Appointments</h3><p>Manage and monitor clinic appointments</p></div><button className="btn btn-primary" onClick={() => openModal("appointment")}>+ New Appointment</button></div>
     <div className="filters">
       <input className="control" type="date" value={from} onChange={(e) => { setPage(0); setFrom(e.target.value); }} />
       <input className="control" type="date" value={to} onChange={(e) => { setPage(0); setTo(e.target.value); }} />
       {!isDoctor && <input className="control" type="number" min="1" placeholder="Doctor ID" value={doctorId} onChange={(e) => { setPage(0); setDoctorId(e.target.value); }} />}
       <input className="control" type="number" min="1" placeholder="Service ID" value={serviceId} onChange={(e) => { setPage(0); setServiceId(e.target.value); }} />
-      <select className="control" value={status} onChange={(e) => { setPage(0); setStatus(e.target.value); }}><option value="">All Status</option><option value="CONFIRMED">Confirmed</option><option value="PENDING">Pending</option><option value="CANCELLED">Cancelled</option></select>
+      <select className="control" value={status} onChange={(e) => { setPage(0); setStatus(e.target.value); }}><option value="">All Status</option><option value="CONFIRMED">Confirmed</option><option value="CHECKED_IN">Checked In</option><option value="WAITING">Waiting</option><option value="IN_CONSULTATION">In Consultation</option><option value="COMPLETED">Completed</option><option value="NO_SHOW">No Show</option><option value="CANCELLED">Cancelled</option></select>
     </div>
     {error && <div className="auth-error">{error}</div>}
     {loading && <div className="card-body"><p className="muted">Loading appointments...</p></div>}
     {!loading && !error && filteredRows.length === 0 && <div className="card-body"><p className="muted">No appointments found.</p></div>}
     {!loading && !error && filteredRows.length > 0 && <div className="table-wrap"><table><thead><tr><th>Patient</th><th>Service</th><th>Doctor</th><th>Date</th><th>Time</th><th>Status</th><th>Suggested Follow-Up</th><th>Action</th></tr></thead><tbody>
-      {filteredRows.map((appointment) => { const action = getAppointmentAction(appointment); const isUpdating = updatingAppointmentId === appointment.id; const isCancelling = cancelingAppointmentId === appointment.id; const isCreatingNext = creatingNextAppointmentId === appointment.id; const isRescheduling = reschedulingAppointmentId === appointment.id; return <tr key={appointment.id}><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "-"}</strong><span>{appointment.phoneNo || appointment.patientPhone || "-"}</span></div></div></td><td>{appointment.serviceName || appointment.service?.name || "-"}</td><td>{appointment.doctorName || appointment.doctor?.name || "-"}</td><td>{appointment.appointmentDate || appointment.date || "-"}</td><td>{formatTime(appointment.startTime || appointment.time)}</td><td><span className={`status ${String(appointment.status || "").toLowerCase()}`}>{appointment.status || "-"}</span></td><td>{appointment.suggestedFollowUpDate || "-"}</td><td><div className="row-actions">{action && <button className="btn btn-light icon-btn" title={isUpdating ? "Updating..." : action.label} disabled={isUpdating} onClick={() => handleStatusUpdate(appointment.id, action.nextStatus)} aria-label={isUpdating ? "Updating..." : action.label}>{isUpdating ? "…" : action.label === "Mark Completed" ? "✓" : "→"}</button>}{canCreateNextAppointment(appointment) && <button className="btn btn-light icon-btn" title={isCreatingNext ? "Creating..." : "Next Visit"} disabled={isCreatingNext} onClick={() => handleCreateNextAppointment(appointment)} aria-label={isCreatingNext ? "Creating..." : "Next Visit"}>{isCreatingNext ? "…" : "+"}</button>}<button className="btn btn-light icon-btn" title={isRescheduling ? "Rescheduling..." : "Reschedule"} disabled={isRescheduling} onClick={() => handleRescheduleAppointment(appointment)} aria-label={isRescheduling ? "Rescheduling..." : "Reschedule"}>{isRescheduling ? "…" : "↺"}</button>{canCancelAppointment(appointment) && <button className="btn btn-danger icon-btn" title={isCancelling ? "Cancelling..." : "Cancel"} disabled={isCancelling} onClick={() => handleCancelAppointment(appointment.id)} aria-label={isCancelling ? "Cancelling..." : "Cancel"}>{isCancelling ? "…" : "✕"}</button>}</div></td></tr>; })}
+      {filteredRows.map((appointment) => { const action = getAppointmentAction(appointment); const isUpdating = updatingAppointmentId === appointment.id; const isCancelling = cancelingAppointmentId === appointment.id; const isCreatingNext = creatingNextAppointmentId === appointment.id; const isRescheduling = reschedulingAppointmentId === appointment.id; const appointmentStatus = String(appointment.status || "").toUpperCase(); const statusClass = appointmentStatus === "IN_CONSULTATION" ? "in_progress" : appointmentStatus.toLowerCase(); return <tr key={appointment.id}><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "-"}</strong><span>{appointment.phoneNo || appointment.patientPhone || "-"}</span></div></div></td><td>{appointment.serviceName || appointment.service?.name || "-"}</td><td>{appointment.doctorName || appointment.doctor?.name || "-"}</td><td>{appointment.appointmentDate || appointment.date || "-"}</td><td>{formatTime(appointment.startTime || appointment.time)}</td><td><span className={`status ${statusClass}`}>{appointment.status || "-"}</span></td><td>{appointment.suggestedFollowUpDate || "-"}</td><td><div className="row-actions">{action && <button className="btn btn-light icon-btn" title={isUpdating ? "Updating..." : action.label} disabled={isUpdating} onClick={() => handleStatusUpdate(appointment.id, action.nextStatus)} aria-label={isUpdating ? "Updating..." : action.label}>{isUpdating ? "…" : action.label === "Mark Completed" ? "✓" : "→"}</button>}{canCreateNextAppointment(appointment) && <button className="btn btn-light icon-btn" title={isCreatingNext ? "Creating..." : "Next Visit"} disabled={isCreatingNext} onClick={() => handleCreateNextAppointment(appointment)} aria-label={isCreatingNext ? "Creating..." : "Next Visit"}>{isCreatingNext ? "…" : "+"}</button>}<button className="btn btn-light icon-btn" title={isRescheduling ? "Rescheduling..." : "Reschedule"} disabled={isRescheduling} onClick={() => handleRescheduleAppointment(appointment)} aria-label={isRescheduling ? "Rescheduling..." : "Reschedule"}>{isRescheduling ? "…" : "↺"}</button>{canCancelAppointment(appointment) && <button className="btn btn-danger icon-btn" title={isCancelling ? "Cancelling..." : "Cancel"} disabled={isCancelling} onClick={() => handleCancelAppointment(appointment.id)} aria-label={isCancelling ? "Cancelling..." : "Cancel"}>{isCancelling ? "…" : "✕"}</button>}</div></td></tr>; })}
     </tbody></table></div>}
     {!loading && !error && <div className="pagination">
       <button className="btn btn-light" disabled={page === 0} onClick={() => handlePageChange(-1)}>Previous</button>
@@ -1212,7 +1312,34 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
         <button className="btn btn-light" disabled={!pagination || page >= (pagination.totalPages || 1) - 1} onClick={() => handlePageChange(1)}>Next</button>
       </div>
     </div>}
-  </div></section>;
+  </div></section>
+  {scheduleModal && <Modal
+    title={scheduleModal.mode === "next" ? "Create Next Visit" : "Reschedule Appointment"}
+    onClose={() => setScheduleModal(null)}
+    onSave={handleScheduleSave}
+    saveLabel={scheduleModal.mode === "next" ? "Create Appointment" : "Reschedule"}
+    saveDisabled={scheduleSlotsLoading || !scheduleModal.startTime}
+  >
+    <div className="form-grid">
+      <Field label="Patient" value={scheduleModal.appointment.patientName || "-"} disabled />
+      <Field label="Date *" type="date" value={scheduleModal.appointmentDate} onChange={(e) => setScheduleModal((value) => ({ ...value, appointmentDate: e.target.value, startTime: "", endTime: "" }))} />
+      <div className="field">
+        <label>Available Slot *</label>
+        <select value={scheduleModal.startTime} onChange={(e) => {
+          const startTime = normalizeTime(e.target.value);
+          const duration = Number(scheduleModal.appointment.durationMinutes || 30);
+          setScheduleModal((value) => ({ ...value, startTime, endTime: addMinutesToTime(startTime, duration) }));
+        }} disabled={scheduleSlotsLoading || scheduleSlots.length === 0}>
+          <option value="">{scheduleSlotsLoading ? "Loading available slots..." : scheduleSlots.length === 0 ? "No slots available" : "Select available slot"}</option>
+          {scheduleSlots.map((slot) => <option key={slot} value={normalizeTime(slot)}>{formatTime(normalizeTime(slot))}</option>)}
+        </select>
+      </div>
+      <Field label="End Time *" type="time" value={scheduleModal.endTime} disabled />
+      {scheduleModal.mode === "reschedule" && <Field label="Reason" value={scheduleModal.reason} onChange={(e) => setScheduleModal((value) => ({ ...value, reason: e.target.value }))} />}
+    </div>
+    {scheduleError && <div className="auth-error" style={{ marginTop: 12 }}>{scheduleError}</div>}
+  </Modal>}
+  </>;
 }
 
 function Patients({ openModal, showToast, clinicId, token }) {
@@ -1223,6 +1350,12 @@ function Patients({ openModal, showToast, clinicId, token }) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(5);
   const [pagination, setPagination] = useState(null);
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [historyPage, setHistoryPage] = useState(0);
+  const [historyPagination, setHistoryPagination] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -1256,6 +1389,31 @@ function Patients({ openModal, showToast, clinicId, token }) {
     return () => { cancelled = true; };
   }, [clinicId, token, page, pageSize]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPatientHistory() {
+      if (!selectedPatient || !token || !clinicId) return;
+
+      try {
+        setHistoryLoading(true);
+        setHistoryError("");
+        const result = await getPatientAppointmentHistory(clinicId, selectedPatient.id, { page: historyPage, size: 10 }, token);
+        if (!cancelled) {
+          setHistory(result.items || []);
+          setHistoryPagination(result.pagination || null);
+        }
+      } catch (err) {
+        if (!cancelled) setHistoryError(err.message || "Unable to load patient history.");
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
+    }
+
+    loadPatientHistory();
+    return () => { cancelled = true; };
+  }, [clinicId, token, selectedPatient, historyPage]);
+
   const filteredPatients = patients.filter((patient) => {
     const query = searchTerm.trim().toLowerCase();
     return !query || patient.name?.toLowerCase().includes(query) || patient.phoneNo?.toLowerCase().includes(query);
@@ -1272,7 +1430,8 @@ function Patients({ openModal, showToast, clinicId, token }) {
     setPageSize(Number(nextSize) || 5);
   }
 
-  return <section className="page active"><div className="card">
+  return <>
+  <section className="page active"><div className="card">
     <div className="card-header"><div><h3>Patients</h3><p>Patients associated with this clinic</p></div><button className="btn btn-primary" onClick={() => openModal("patient")}>+ Add Patient</button></div>
     <div className="filters"><input className="control" style={{minWidth:240}} placeholder="Search by name or WhatsApp..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} /><button className="btn btn-outline" onClick={() => showToast(`${filteredPatients.length} patients found`)}>Search</button></div>
     <div className="card-body">
@@ -1281,7 +1440,7 @@ function Patients({ openModal, showToast, clinicId, token }) {
       {!loading && !error && filteredPatients.length === 0 && <p className="muted">No patients found for this clinic.</p>}
     </div>
     {!loading && !error && filteredPatients.length > 0 && <div className="table-wrap"><table><thead><tr><th>ID</th><th>Patient</th><th>WhatsApp</th><th>Clinic ID</th><th>Action</th></tr></thead><tbody>
-      {filteredPatients.map((patient) => <tr key={patient.id}><td>{patient.id}</td><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: patient.name })}</div><div><strong>{patient.name}</strong><span>Patient</span></div></div></td><td>{patient.phoneNo}</td><td>{patient.clinicId}</td><td><button className="btn btn-light" onClick={() => showToast("Patient profile opened")}>View</button></td></tr>)}
+      {filteredPatients.map((patient) => <tr key={patient.id}><td>{patient.id}</td><td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: patient.name })}</div><div><strong>{patient.name}</strong><span>Patient</span></div></div></td><td>{patient.phoneNo}</td><td>{patient.clinicId}</td><td><button className="btn btn-light icon-btn" title="View patient history" aria-label="View patient history" onClick={() => { setSelectedPatient(patient); setHistoryPage(0); setHistory([]); setHistoryPagination(null); setHistoryError(""); }}>👁</button></td></tr>)}
     </tbody></table></div>}
     {!loading && !error && <div className="pagination">
       <button className="btn btn-light" disabled={page === 0} onClick={() => handlePageChange(-1)}>Previous</button>
@@ -1291,7 +1450,16 @@ function Patients({ openModal, showToast, clinicId, token }) {
         <button className="btn btn-light" disabled={!pagination || page >= (pagination.totalPages || 1) - 1} onClick={() => handlePageChange(1)}>Next</button>
       </div>
     </div>}
-  </div></section>;
+  </div></section>
+  {selectedPatient && <Modal title={`${selectedPatient.name} - Appointment History`} onClose={() => setSelectedPatient(null)} onSave={() => setSelectedPatient(null)} saveLabel="Close" saveDisabled={false}>
+    <div className="patient-cell" style={{ marginBottom: 16 }}><div className="small-avatar">{initials({ firstName: selectedPatient.name })}</div><div><strong>{selectedPatient.name}</strong><span>{selectedPatient.phoneNo || "-"}</span></div></div>
+    {historyLoading && <p className="muted">Loading appointment history...</p>}
+    {!historyLoading && historyError && <div className="auth-error">{historyError}</div>}
+    {!historyLoading && !historyError && history.length === 0 && <p className="muted">No appointment history found.</p>}
+    {!historyLoading && !historyError && history.length > 0 && <div className="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Doctor</th><th>Service</th><th>Status</th><th>Follow-Up</th></tr></thead><tbody>{history.map((appointment) => <tr key={appointment.id}><td>{appointment.appointmentDate || "-"}</td><td>{formatTime(appointment.startTime)}</td><td>{appointment.doctorName || "-"}</td><td>{appointment.serviceName || "-"}</td><td><span className={`status ${String(appointment.status || "").toLowerCase()}`}>{appointment.status || "-"}</span></td><td>{appointment.suggestedFollowUpDate || "-"}</td></tr>)}</tbody></table></div>}
+    {!historyLoading && !historyError && <div className="pagination"><button className="btn btn-light" disabled={historyPage === 0} onClick={() => setHistoryPage((value) => Math.max(0, value - 1))}>Previous</button><span className="pagination-meta">Page {historyPage + 1} of {Math.max(historyPagination?.totalPages || 1, 1)}</span><button className="btn btn-light" disabled={!historyPagination || historyPage >= (historyPagination.totalPages || 1) - 1} onClick={() => setHistoryPage((value) => value + 1)}>Next</button></div>}
+  </Modal>}
+  </>;
 }
 
 function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, showToast }) {
@@ -1302,6 +1470,10 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
   const [error, setError] = useState("");
   const [updatingAppointmentId, setUpdatingAppointmentId] = useState(null);
   const [draggedWaitingAppointmentId, setDraggedWaitingAppointmentId] = useState(null);
+  const [followUpSchedule, setFollowUpSchedule] = useState(null);
+  const [followUpSlots, setFollowUpSlots] = useState([]);
+  const [followUpSlotsLoading, setFollowUpSlotsLoading] = useState(false);
+  const [followUpScheduleError, setFollowUpScheduleError] = useState("");
   const isDoctor = String(userRole).toUpperCase() === "DOCTOR";
 
   useEffect(() => {
@@ -1321,7 +1493,7 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
         setError("");
         const filters = { from: today, to: today, doctorId: isDoctor ? userDoctorId : "" };
         const [inProgressResult, waitingResult] = await Promise.all([
-          getClinicAppointments(clinicId, { ...filters, status: "IN_PROGRESS" }, token),
+          getClinicAppointments(clinicId, { ...filters, status: "IN_CONSULTATION" }, token),
           getClinicAppointments(clinicId, { ...filters, status: "WAITING" }, token),
         ]);
         if (!cancelled) {
@@ -1338,6 +1510,36 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
     loadQueue();
     return () => { cancelled = true; };
   }, [clinicId, token, today, isDoctor, userDoctorId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadFollowUpSlots() {
+      const appointment = followUpSchedule?.appointment;
+      if (!followUpSchedule || !token || !clinicId || !appointment?.doctorId || !appointment?.serviceId || !followUpSchedule.date) {
+        setFollowUpSlots([]);
+        setFollowUpSlotsLoading(false);
+        return;
+      }
+
+      try {
+        setFollowUpSlotsLoading(true);
+        setFollowUpScheduleError("");
+        const slots = await getClinicAvailableSlots(clinicId, appointment.doctorId, appointment.serviceId, followUpSchedule.date, token);
+        if (!cancelled) setFollowUpSlots(slots);
+      } catch (err) {
+        if (!cancelled) {
+          setFollowUpSlots([]);
+          setFollowUpScheduleError(err.message || "Unable to load available slots.");
+        }
+      } finally {
+        if (!cancelled) setFollowUpSlotsLoading(false);
+      }
+    }
+
+    loadFollowUpSlots();
+    return () => { cancelled = true; };
+  }, [followUpSchedule, clinicId, token]);
 
   const matchesSearch = (appointment) => {
     const query = search.trim().toLowerCase();
@@ -1367,21 +1569,34 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
   }
 
   async function handleFollowUp(appointmentId) {
-    const suggestedFollowUpDate = window.prompt(
-      "Enter follow-up date (YYYY-MM-DD)",
-      new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-    );
+    const appointment = inProgressAppointments.find((item) => String(item.id) === String(appointmentId));
+    if (!appointment) return;
 
-    if (!suggestedFollowUpDate || !appointmentId) return;
+    setFollowUpScheduleError("");
+    setFollowUpSlots([]);
+    setFollowUpSchedule({
+      appointment,
+      date: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+      slot: "",
+    });
+  }
 
+  async function saveFollowUpSchedule() {
+    if (!followUpSchedule?.date || !followUpSchedule.slot) {
+      setFollowUpScheduleError("Please select a date and available slot.");
+      return;
+    }
+
+    const appointmentId = followUpSchedule.appointment.id;
     try {
       setUpdatingAppointmentId(appointmentId);
-      setError("");
-      await followUpAppointment(Number(appointmentId), suggestedFollowUpDate, token);
+      setFollowUpScheduleError("");
+      await followUpAppointment(Number(appointmentId), followUpSchedule.date, token);
       setInProgressAppointments((items) => items.filter((appointment) => appointment.id !== appointmentId));
-      showToast(`Follow-up scheduled for ${suggestedFollowUpDate}`);
+      setFollowUpSchedule(null);
+      showToast(`Follow-up scheduled for ${followUpSchedule.date} at ${formatTime(followUpSchedule.slot)}`);
     } catch (err) {
-      setError(err.message || "Unable to schedule follow-up.");
+      setFollowUpScheduleError(err.message || "Unable to schedule follow-up.");
     } finally {
       setUpdatingAppointmentId(null);
     }
@@ -1396,7 +1611,7 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
       const changedAppointment = { ...currentAppointment, ...(updated || {}), status: updated?.status || nextStatus };
       setInProgressAppointments((items) => items.filter((appointment) => appointment.id !== appointmentId));
       setWaitingAppointments((items) => items.filter((appointment) => appointment.id !== appointmentId));
-      if (changedAppointment.status === "IN_PROGRESS") setInProgressAppointments((items) => [...items, changedAppointment]);
+      if (changedAppointment.status === "IN_CONSULTATION") setInProgressAppointments((items) => [...items, changedAppointment]);
       if (changedAppointment.status === "WAITING") setWaitingAppointments((items) => [...items, changedAppointment]);
       showToast(`Appointment marked ${nextStatus.replaceAll("_", " ").toLowerCase()}`);
     } catch (err) {
@@ -1406,13 +1621,37 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
     }
   }
 
-  return <section className="page active queue-page">
+  return <>
+  <section className="page active queue-page">
     <div className="queue-hero"><div><span className="queue-eyebrow">LIVE CLINIC FLOW</span><h2>Today&apos;s Appointment Queue</h2><p>Patients currently checked in or waiting for care.</p></div><div className="queue-count"><strong>{totalInQueue}</strong><span>in queue</span></div></div>
     {error && <div className="auth-error">{error}</div>}
     {loading && <div className="card queue-empty"><span className="queue-pulse" /><p>Loading the queue...</p></div>}
     {!loading && !error && totalInQueue === 0 && <div className="card queue-empty"><div className="queue-empty-icon">✓</div><h3>Queue is clear</h3><p>No consultation or waiting patients need attention right now.</p></div>}
-    {!loading && !error && totalInQueue > 0 && <div className="queue-columns"><QueueLane title="Start Consultation" subtitle="Consultation in progress" appointments={visibleInProgressAppointments} actionLabel="Follow Up" nextStatus="FOLLOW_UP" updatingAppointmentId={updatingAppointmentId} onStatusChange={handleFollowUp} /><QueueLane title="Waiting" subtitle="Ready for the doctor" appointments={visibleWaitingAppointments} actionLabel="Start Consultation" nextStatus="IN_PROGRESS" updatingAppointmentId={updatingAppointmentId} onStatusChange={changeStatus} isReorderable onReorder={reorderWaitingAppointments} draggedAppointmentId={draggedWaitingAppointmentId} setDraggedAppointmentId={setDraggedWaitingAppointmentId} /></div>}
-  </section>;
+    {!loading && !error && totalInQueue > 0 && <div className="queue-columns"><QueueLane title="Start Consultation" subtitle="Consultation in progress" appointments={visibleInProgressAppointments} actionLabel="Follow Up" nextStatus="FOLLOW_UP" updatingAppointmentId={updatingAppointmentId} onStatusChange={handleFollowUp} /><QueueLane title="Waiting" subtitle="Ready for the doctor" appointments={visibleWaitingAppointments} actionLabel="Start Consultation" nextStatus="IN_CONSULTATION" updatingAppointmentId={updatingAppointmentId} onStatusChange={changeStatus} isReorderable onReorder={reorderWaitingAppointments} draggedAppointmentId={draggedWaitingAppointmentId} setDraggedAppointmentId={setDraggedWaitingAppointmentId} /></div>}
+  </section>
+  {followUpSchedule && <Modal
+    title="Schedule Follow-up"
+    onClose={() => setFollowUpSchedule(null)}
+    onSave={saveFollowUpSchedule}
+    saveLabel="Schedule Follow-up"
+    saveDisabled={followUpSlotsLoading || !followUpSchedule.slot || updatingAppointmentId === followUpSchedule.appointment.id}
+  >
+    <div className="form-grid">
+      <Field label="Patient" value={followUpSchedule.appointment.patientName || "-"} disabled />
+      <Field label="Doctor" value={followUpSchedule.appointment.doctorName || "-"} disabled />
+      <Field label="Service" value={followUpSchedule.appointment.serviceName || "-"} disabled />
+      <Field label="Follow-up Date *" type="date" value={followUpSchedule.date} onChange={(e) => setFollowUpSchedule((value) => ({ ...value, date: e.target.value, slot: "" }))} />
+      <div className="field">
+        <label>Available Slot *</label>
+        <select value={followUpSchedule.slot} onChange={(e) => setFollowUpSchedule((value) => ({ ...value, slot: normalizeTime(e.target.value) }))} disabled={followUpSlotsLoading || followUpSlots.length === 0}>
+          <option value="">{followUpSlotsLoading ? "Loading available slots..." : followUpSlots.length === 0 ? "No slots available" : "Select available slot"}</option>
+          {followUpSlots.map((slot) => <option key={slot} value={normalizeTime(slot)}>{formatTime(normalizeTime(slot))}</option>)}
+        </select>
+      </div>
+    </div>
+    {followUpScheduleError && <div className="auth-error" style={{ marginTop: 12 }}>{followUpScheduleError}</div>}
+  </Modal>}
+  </>;
 }
 
 function QueueLane({ title, subtitle, appointments, actionLabel, nextStatus, updatingAppointmentId, onStatusChange, isReorderable = false, onReorder, draggedAppointmentId, setDraggedAppointmentId }) {
@@ -1741,6 +1980,7 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
   const [doctorAvailability, setDoctorAvailability] = useState(defaultDoctorAvailability);
   const [availableDoctors, setAvailableDoctors] = useState([]);
   const [selectedDoctorId, setSelectedDoctorId] = useState(String(doctorId || ""));
+  const [activeTab, setActiveTab] = useState("profile");
   const [workingHours, setWorkingHours] = useState([
     { day: "MONDAY", active: true, start: "09:00", end: "19:00", breakStart: "13:00", breakEnd: "14:00" },
     { day: "TUESDAY", active: true, start: "09:00", end: "19:00", breakStart: "13:00", breakEnd: "14:00" },
@@ -2027,10 +2267,15 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
   }
 
   return <section className="page active"><div className="card"><div className="settings-grid">
-    <div className="settings-nav">{canViewClinicProfile && <button className="active">Clinic Profile</button>}<button>Appointment Settings</button><button>WhatsApp / AI</button><button>Notifications</button><button>Security</button></div>
+    <div className="settings-nav">
+      <button className={activeTab === "profile" ? "active" : ""} onClick={() => setActiveTab("profile")}>Clinic Profile</button>
+      <button className={activeTab === "holidays" ? "active" : ""} onClick={() => setActiveTab("holidays")}>Clinic Holidays</button>
+      <button className={activeTab === "doctor" ? "active" : ""} onClick={() => setActiveTab("doctor")}>Doctor Availability</button>
+      <button className={activeTab === "hours" ? "active" : ""} onClick={() => setActiveTab("hours")}>Working Hours</button>
+    </div>
     <div className="settings-main">
       {error && <div className="auth-error">{error}</div>}
-      {canViewClinicProfile && <><h3>Clinic Profile</h3><p className="muted">Basic information displayed across your clinic dashboard.</p>
+      {activeTab === "profile" && canViewClinicProfile && <><h3>Clinic Profile</h3><p className="muted">Basic information displayed across your clinic dashboard.</p>
       {editingClinicId !== null && <div className="auth-warning">Editing clinic #{editingClinicId}</div>}
       <div className="form-grid mt">
         <Field label="Clinic Name" value={form.name} onChange={(e) => setForm((value) => ({ ...value, name: e.target.value }))} />
@@ -2043,15 +2288,15 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
         {editingClinicId !== null && <button className="btn btn-outline" onClick={cancelEdit} disabled={saving}>Cancel Edit</button>}
       </div>
       </>}
-      <div className="mt">
+      {activeTab === "profile" && <div className="mt">
         <h3>Saved Clinic Profiles</h3>
         {loadingClinics && <p className="muted">Loading clinic profiles...</p>}
         {!loadingClinics && clinics.length === 0 && <p className="muted">No clinic profiles found.</p>}
         {!loadingClinics && clinics.length > 0 && <div className="table-wrap"><table><thead><tr><th>ID</th><th>Clinic Name</th><th>WhatsApp Number</th><th>Timezone</th><th>Status</th><th>Created</th>{canViewClinicProfile && <th>Action</th>}</tr></thead><tbody>
           {clinics.map((clinic) => <tr key={clinic.id}><td>{clinic.id}</td><td><strong>{clinic.name}</strong></td><td>{clinic.whatsappNumber}</td><td>{clinic.timezone}</td><td><span className={`status ${clinic.active ? "confirmed" : "cancelled"}`}>{clinic.active ? "ACTIVE" : "INACTIVE"}</span></td><td>{clinic.createdAt ? new Date(clinic.createdAt).toLocaleDateString() : "-"}</td>{canViewClinicProfile && <td><button className="btn btn-light" onClick={() => editClinic(clinic)}>Edit</button></td>}</tr>)}
         </tbody></table></div>}
-      </div>
-      <div className="mt">
+      </div>}
+      {activeTab === "holidays" && <div className="mt">
         <h3>Clinic Holidays</h3>
         <p className="muted">Create a holiday that will be marked for this clinic.</p>
         <div className="form-grid mt">
@@ -2073,8 +2318,8 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
             </div>;
           })}</div>}
         </div>
-      </div>
-      <div className="mt">
+      </div>}
+      {activeTab === "doctor" && <div className="mt">
         <h3>Doctor Availability</h3>
         <p className="muted">Set the doctor’s schedule for each day of the week.</p>
         <div className="form-grid mt">
@@ -2094,8 +2339,8 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
           </div>)}
         </div>
         <button className="btn btn-primary mt" onClick={handleDoctorAvailabilitySave} disabled={doctorAvailabilitySaving}>{doctorAvailabilitySaving ? "Saving..." : "Save Doctor Availability"}</button>
-      </div>
-      <div className="working-hours mt">
+      </div>}
+      {activeTab === "hours" && <div className="working-hours mt">
         <h3>Working Hours</h3>
         <p className="muted">Set the clinic schedule and daily break times.</p>
         <div className="working-hours-list">
@@ -2136,6 +2381,6 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
             setWorkingHoursSaving(false);
           }
         }} disabled={workingHoursSaving}>{workingHoursSaving ? "Saving..." : "Save Working Hours"}</button>
-      </div>
-  </div></div></div></section>;
+        </div>}
+      </div></div></div></section>;
 }

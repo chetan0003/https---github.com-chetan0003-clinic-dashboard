@@ -169,6 +169,24 @@ export function getClinicServices(clinicId, token, doctorId) {
   }).then((payload) => unwrapApiData(payload));
 }
 
+export function getClinicAvailableSlots(clinicId, doctorId, serviceId, date, token) {
+  const query = new URLSearchParams({
+    doctorId: String(doctorId),
+    serviceId: String(serviceId),
+    date,
+  });
+
+  return request(`/api/dashboard/clinics/${clinicId}/availability?${query.toString()}`, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  }).then((payload) => {
+    const data = unwrapApiData(payload);
+    return Array.isArray(data?.slots) ? data.slots : [];
+  });
+}
+
 export function createClinicService(clinicId, payload, token) {
   return request(`/api/dashboard/clinics/${clinicId}/services`, {
     method: "POST",
@@ -258,6 +276,36 @@ export function getClinicPatients(clinicId, filters = {}, token) {
     }
 
     return list;
+  });
+}
+
+export function getPatientAppointmentHistory(clinicId, patientId, filters = {}, token) {
+  const query = new URLSearchParams();
+  if (filters.page !== undefined && filters.page !== null) query.set("page", String(filters.page));
+  if (filters.size) query.set("size", String(filters.size));
+
+  return request(`/api/dashboard/clinics/${clinicId}/patients/${patientId}/appointments?${query.toString()}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }).then((payload) => {
+    const unwrapped = unwrapApiData(payload);
+    const items = Array.isArray(unwrapped)
+      ? unwrapped
+      : unwrapped && Array.isArray(unwrapped.content)
+        ? unwrapped.content
+        : [];
+    const pagination = unwrapped && typeof unwrapped === "object" && !Array.isArray(unwrapped)
+      ? {
+          pageNumber: unwrapped.pageNumber ?? unwrapped.number ?? 0,
+          pageSize: unwrapped.pageSize ?? unwrapped.size ?? items.length,
+          totalPages: unwrapped.totalPages ?? 0,
+          totalElements: unwrapped.totalElements ?? items.length,
+          number: unwrapped.number ?? unwrapped.pageNumber ?? 0,
+          size: unwrapped.size ?? unwrapped.pageSize ?? items.length,
+        }
+      : null;
+    return { items, pagination };
   });
 }
 
