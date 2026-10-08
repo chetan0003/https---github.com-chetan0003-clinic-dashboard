@@ -2,10 +2,15 @@ import React from "react";
 import { useEffect, useMemo,useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import Subscriptions from "./Subscriptions";
-import { cancelAppointment, collectAppointmentPayment, connectClinicWhatsApp, createClinicAppointment, createClinicDoctor, createClinicHoliday, createClinicPatient, createClinicService, createClinicUser, createNextAppointment, deleteClinicDoctor, deleteClinicHoliday, deleteClinicService, followUpAppointment, generateClinicQr, generatePatientQr, getAppointmentPayment, getClinicAppointments, getClinicAvailableSlots, getClinicDashboard, getClinicDoctors, getClinicHolidays, getClinicNotifications, getClinicPatients, getClinicProfiles, getClinicServices, getClinicUnreadNotificationCount, getClinicUsers, getClinicWeeklyAppointments, getClinicWorkingHours, getDoctorAvailability, getDoctorServices, getPatientAppointmentHistory, getUserClinics, markAllClinicNotificationsRead, markClinicNotificationRead, rescheduleAppointment, saveClinicProfile, saveClinicWhatsAppConfig, saveDoctorAvailability, searchClinicPatientsByQuery, updateAppointmentStatus, updateClinicDoctor, updateClinicProfile, updateClinicPatient, upsertClinicWorkingHours } from "../services/api";
+import ClinicPolicySettings from "./ClinicPolicySettings";
+import holaMdLogo from "../assets/logo/holamd-new-logo.png";
+import whatsAppIcon from "../assets/logo/WhatsApp-Icon.png";
+import jsQR from "jsqr";
+import { activateClinicPolicy, cancelAppointment, checkInAppointment, checkInAppointmentByQrToken, collectAppointmentPayment, connectClinicWhatsApp, createClinicAppointment, createClinicDoctor, createClinicHoliday, createClinicPatient, createClinicPolicy, createClinicService, createClinicUser, createNextAppointment, deactivateClinicPolicy, deleteClinicAppointment, deleteClinicDoctor, deleteClinicHoliday, deleteClinicService, followUpAppointment, generateClinicQr, generatePatientQr, getAppointmentByQrToken, getAppointmentPayment, getClinicAppointments, getClinicAvailableSlots, getClinicDashboard, getClinicDoctors, getClinicHolidays, getClinicNotifications, getClinicPatients, getClinicPolicy, getClinicPolicies, getClinicPoliciesByCategory, getClinicPolicyVersions, getClinicProfiles, getClinicServices, getClinicUnreadNotificationCount, getClinicUsers, getClinicWeeklyAppointments, getClinicWorkingHours, getDoctorAvailability, getDoctorServices, getPatientAppointmentHistory, getUserClinics, markAllClinicNotificationsRead, markClinicNotificationRead, rescheduleAppointment, rollbackClinicPolicy, saveClinicProfile, saveClinicWhatsAppConfig, saveDoctorAvailability, searchClinicPatientsByQuery, updateAppointmentStatus, updateClinicDoctor, updateClinicPolicy, updateClinicProfile, updateClinicPatient, upsertClinicWorkingHours, validateClinicPolicy } from "../services/api";
 
 const pageMeta = {
   dashboard: ["Dashboard", "Good morning. Here's today's clinic overview."],
+  reception: ["Reception Desk", "Check in patients, collect payments, and manage the OPD queue."],
   appointments: ["Appointments", "Manage and monitor clinic appointments."],
   queue: ["Appointment Queue", "Keep today's checked-in patients moving."],
   patients: ["Patients", "Patients associated with this clinic."],
@@ -18,11 +23,11 @@ const pageMeta = {
 };
 
 const appointments = [
-  ["Ankita Sharma", "AS", "Dental Consultation", "Dr Patel", "24 Aug 2026", "09:00 AM", "CONFIRMED"],
-  ["Neeta Deshmukh", "ND", "Health Consultation", "Dr Nikhil", "24 Aug 2026", "10:30 AM", "CONFIRMED"],
-  ["Rahul Joshi", "RJ", "Teeth Cleaning", "Dr Sharma", "24 Aug 2026", "12:00 PM", "PENDING"],
-  ["Priya Patil", "PP", "Dental Consultation", "Dr Patel", "24 Aug 2026", "03:30 PM", "CONFIRMED"],
-  ["Amit Kulkarni", "AK", "Health Consultation", "Dr Nikhil", "24 Aug 2026", "06:00 PM", "CONFIRMED"],
+  // ["Ankita Sharma", "AS", "Dental Consultation", "Dr Patel", "24 Aug 2026", "09:00 AM", "CONFIRMED"],
+  // ["Neeta Deshmukh", "ND", "Health Consultation", "Dr Nikhil", "24 Aug 2026", "10:30 AM", "CONFIRMED"],
+  // ["Rahul Joshi", "RJ", "Teeth Cleaning", "Dr Sharma", "24 Aug 2026", "12:00 PM", "PENDING"],
+  // ["Priya Patil", "PP", "Dental Consultation", "Dr Patel", "24 Aug 2026", "03:30 PM", "CONFIRMED"],
+  // ["Amit Kulkarni", "AK", "Health Consultation", "Dr Nikhil", "24 Aug 2026", "06:00 PM", "CONFIRMED"],
 ];
 
 function initials(user) {
@@ -94,7 +99,7 @@ function mapClinicWorkingHours(savedHours) {
   });
 }
 
-function Modal({ title, children, onClose, onSave, saveLabel = "Save", saveDisabled = false, saveClassName = "btn btn-primary", className = "" }) {
+function Modal({ title, children, onClose, onSave, cancelLabel = "Cancel", saveLabel = "Save", saveDisabled = false, saveClassName = "btn btn-primary", className = "" }) {
   return (
     <div className="modal-backdrop open" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`modal ${className}`}>
@@ -104,7 +109,7 @@ function Modal({ title, children, onClose, onSave, saveLabel = "Save", saveDisab
         </div>
         <div className="modal-body">{children}</div>
         <div className="modal-footer">
-          <button className="btn btn-outline" onClick={onClose}>Cancel</button>
+          <button className="btn btn-outline" onClick={onClose}>{cancelLabel}</button>
           <button className={saveClassName} onClick={onSave} disabled={saveDisabled}>{saveLabel}</button>
         </div>
       </div>
@@ -205,7 +210,10 @@ function AppointmentPaymentDialog({ appointment, token, onClose, onPaymentCollec
 
 export default function Dashboard({ theme, onToggleTheme }) {
   const { user, token, logout } = useAuth();
-  const [page, setPage] = useState(() => user?.isPlanActive === false && String(user?.role).toUpperCase() !== "SUPER_ADMIN" ? "subscriptions" : "dashboard");
+  const [page, setPage] = useState(() => {
+    if (user?.isPlanActive === false && String(user?.role).toUpperCase() !== "SUPER_ADMIN") return "subscriptions";
+    return String(user?.role).toUpperCase() === "STAFF" ? "reception" : "dashboard";
+  });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [modal, setModal] = useState(null);
@@ -252,6 +260,7 @@ export default function Dashboard({ theme, onToggleTheme }) {
   const [notifications, setNotifications] = useState([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationsExpanded, setNotificationsExpanded] = useState(false);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState("");
   const [notificationActionId, setNotificationActionId] = useState(null);
@@ -263,9 +272,11 @@ export default function Dashboard({ theme, onToggleTheme }) {
     user?.username ||
     "Chetan Admin";
   const role = user?.role || "CLINIC ADMIN";
+  const normalizedRole = String(role).toUpperCase();
   const avatar = initials(user);
-  const isDoctor = String(role).toUpperCase() === "DOCTOR";
-  const isSuperAdmin = String(role).toUpperCase() === "SUPER_ADMIN";
+  const isDoctor = normalizedRole === "DOCTOR";
+  const isSuperAdmin = normalizedRole === "SUPER_ADMIN";
+  const canUseReceptionDesk = ["STAFF", "CLINIC_ADMIN"].includes(normalizedRole);
   const canViewAppointmentQueue = isDoctor || isSuperAdmin;
   const canManageStaff = ["SUPER_ADMIN", "CLINIC_ADMIN"].includes(String(role).toUpperCase());
   const canManageSettings = ["SUPER_ADMIN", "CLINIC_ADMIN"].includes(String(role).toUpperCase());
@@ -542,7 +553,7 @@ export default function Dashboard({ theme, onToggleTheme }) {
     <div className="app">
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="brand">
-          <div className="brand-logo">+</div>
+          <img className="brand-logo-image" src={holaMdLogo} alt="Hola MD logo" />
           <div className="brand-name">Hola MD</div>
         </div>
 
@@ -559,6 +570,7 @@ export default function Dashboard({ theme, onToggleTheme }) {
         <NavButton active={page === "dashboard"} onClick={() => go("dashboard")} icon="▣">Dashboard</NavButton>
 
         <div className="nav-section">Clinic Operations</div>
+        {canUseReceptionDesk && <NavButton active={page === "reception"} onClick={() => go("reception")} icon="▣">Reception Desk</NavButton>}
         <NavButton active={page === "appointments"} onClick={() => go("appointments")} icon="◷">Appointments</NavButton>
         {canViewAppointmentQueue && <NavButton active={page === "queue"} onClick={() => go("queue")} icon="☷">Appointment Queue</NavButton>}
         <NavButton active={page === "patients"} onClick={() => go("patients")} icon="♙">Patients</NavButton>
@@ -606,7 +618,7 @@ export default function Dashboard({ theme, onToggleTheme }) {
               {theme === "dark" ? "☀" : "☾"}
             </button>
             <div className="notification-menu" ref={notificationMenuRef}>
-              <button className="icon-btn notification-trigger" onClick={() => setNotificationsOpen((open) => !open)} aria-label={`Notifications${unreadNotificationCount ? `, ${unreadNotificationCount} unread` : ""}`} aria-expanded={notificationsOpen}>
+              <button className="icon-btn notification-trigger" onClick={() => { setNotificationsExpanded(false); setNotificationsOpen((open) => !open); }} aria-label={`Notifications${unreadNotificationCount ? `, ${unreadNotificationCount} unread` : ""}`} aria-expanded={notificationsOpen}>
                 ♢
                 {unreadNotificationCount > 0 && <span className="notification-count">{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</span>}
               </button>
@@ -622,7 +634,7 @@ export default function Dashboard({ theme, onToggleTheme }) {
                 <div className="notification-list">
                   {notificationsLoading && notifications.length === 0 && <p className="notification-empty">Loading notifications...</p>}
                   {!notificationsLoading && notifications.length === 0 && <p className="notification-empty">You&apos;re all caught up.</p>}
-                  {notifications.map((notification) => <button type="button" className={`notification-item ${notification.read ? "read" : "unread"}`} key={notification.id} onClick={() => openNotification(notification)} disabled={notificationActionId === notification.id}>
+                  {notifications.slice(0, notificationsExpanded ? notifications.length : 5).map((notification) => <button type="button" className={`notification-item ${notification.read ? "read" : "unread"}`} key={notification.id} onClick={() => openNotification(notification)} disabled={notificationActionId === notification.id}>
                     <span className="notification-type-icon" aria-hidden="true">{String(notification.type || "").includes("APPOINTMENT") ? "▣" : "◇"}</span>
                     <span className="notification-item-content">
                       <strong>{notification.title || "Notification"}</strong>
@@ -632,6 +644,7 @@ export default function Dashboard({ theme, onToggleTheme }) {
                     {!notification.read && <span className="notification-new-label">New</span>}
                   </button>)}
                 </div>
+                {notifications.length > 5 && <button type="button" className="notification-view-more" onClick={() => setNotificationsExpanded((expanded) => !expanded)}>{notificationsExpanded ? "View less" : `View more (${notifications.length - 5})`}</button>}
               </section>}
             </div>
             <div className="profile">
@@ -648,6 +661,28 @@ export default function Dashboard({ theme, onToggleTheme }) {
           {clinicsLoading ? <PageLoader /> : <>
           {page === "dashboard" && (
             <DashboardHome go={go} openModal={setModal} clinicId={selectedClinicId} clinicName={selectedClinicName} token={token} />
+          )}
+
+          {page === "reception" && canUseReceptionDesk && (
+            <ReceptionDesk
+              clinicId={selectedClinicId}
+              token={token}
+              search={search}
+              openModal={setModal}
+              showToast={showToast}
+              onUpdatePatient={(patient) => {
+                setEditingPatientId(patient.id);
+                setPatientForm({
+                  name: patient.name || "",
+                  whatsappNumber: patient.whatsappNumber || patient.phoneNo || "",
+                  email: patient.email || "",
+                  dateOfBirth: patient.dateOfBirth || "",
+                  gender: patient.gender || "",
+                });
+                setPatientError("");
+                setModal("patient");
+              }}
+            />
           )}
 
           {page === "appointments" && (
@@ -691,7 +726,7 @@ export default function Dashboard({ theme, onToggleTheme }) {
               });
               setPatientError("");
               setModal("patient");
-            }} showToast={showToast} clinicId={selectedClinicId} token={token} />
+            }} showToast={showToast} clinicId={selectedClinicId} clinicName={selectedClinicName} token={token} />
           )}
 
           {page === "doctors" && (
@@ -745,7 +780,7 @@ export default function Dashboard({ theme, onToggleTheme }) {
 
           {page === "subscriptions" && canViewSubscriptions && <Subscriptions clinicId={selectedClinicId} clinicName={selectedClinicName} token={token} isSuperAdmin={isSuperAdmin} showToast={showToast} />}
 
-          {page === "settings" && canManageSettings && <Settings showToast={showToast} clinicId={selectedClinicId} doctorId={userDoctorId || 1} token={token} canViewClinicProfile={canViewClinicProfile} />}
+          {page === "settings" && canManageSettings && <Settings showToast={showToast} clinicId={selectedClinicId} clinicName={selectedClinicName} token={token} canViewClinicProfile={canViewClinicProfile} />}
           </>}
         </div>
       </main>
@@ -1352,10 +1387,13 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [updatingAppointmentId, setUpdatingAppointmentId] = useState(null);
   const [cancelingAppointmentId, setCancelingAppointmentId] = useState(null);
   const [cancelConfirmationId, setCancelConfirmationId] = useState(null);
   const [cancelError, setCancelError] = useState("");
+  const [deletingAppointmentId, setDeletingAppointmentId] = useState(null);
+  const [deleteConfirmationAppointment, setDeleteConfirmationAppointment] = useState(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
   const [creatingNextAppointmentId, setCreatingNextAppointmentId] = useState(null);
   const [reschedulingAppointmentId, setReschedulingAppointmentId] = useState(null);
   const [scheduleModal, setScheduleModal] = useState(null);
@@ -1363,7 +1401,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   const [scheduleSlotsLoading, setScheduleSlotsLoading] = useState(false);
   const [scheduleError, setScheduleError] = useState("");
   const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(5);
+  const [pageSize, setPageSize] = useState(10);
   const [pagination, setPagination] = useState(null);
   const [appointmentDetails, setAppointmentDetails] = useState(null);
   const [appointmentDetailsLoading, setAppointmentDetailsLoading] = useState(false);
@@ -1373,6 +1411,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   const [appointmentPaymentError, setAppointmentPaymentError] = useState("");
   const [paymentAppointment, setPaymentAppointment] = useState(null);
   const isDoctor = String(userRole).toUpperCase() === "DOCTOR";
+  const isSuperAdmin = String(userRole).toUpperCase() === "SUPER_ADMIN";
 
   useEffect(() => {
     let cancelled = false;
@@ -1489,7 +1528,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
 
     loadAppointments();
     return () => { cancelled = true; };
-  }, [clinicId, token, from, to, doctorId, serviceId, status, isDoctor, userDoctorId, page, pageSize]);
+  }, [clinicId, token, from, to, doctorId, serviceId, status, isDoctor, userDoctorId, page, pageSize, refreshKey]);
 
   const filteredRows = rows.filter((appointment) => {
     const query = search.trim().toLowerCase();
@@ -1503,15 +1542,6 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   const currentPage = Number(pagination?.number ?? pagination?.pageNumber ?? page) || 0;
   const totalPages = Number(pagination?.totalPages) > 0 ? Number(pagination.totalPages) : null;
   const hasNextPage = totalPages !== null ? currentPage < totalPages - 1 : rows.length >= pageSize;
-  const today = (() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  })();
-
-  function isAppointmentToday(appointment) {
-    return String(appointment.appointmentDate || appointment.date || "").slice(0, 10) === today;
-  }
-
   function openPaymentDialog(appointment) {
     setPaymentAppointment(appointment);
   }
@@ -1579,30 +1609,6 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
         : item));
   }
 
-  async function handleStatusUpdate(appointmentId, nextStatus) {
-    const appointment = rows.find((item) => String(item.id) === String(appointmentId));
-    if (!appointment || !isAppointmentToday(appointment)) return;
-
-    if (!token) {
-      setError("Please log in to update appointments.");
-      return;
-    }
-
-    try {
-      setUpdatingAppointmentId(appointmentId);
-      setError("");
-      const updatedAppointment = await updateAppointmentStatus(appointmentId, nextStatus, token);
-      setRows((items) => items.map((appointment) => appointment.id === appointmentId
-        ? { ...appointment, ...(updatedAppointment || {}), status: updatedAppointment?.status || nextStatus }
-        : appointment));
-      showToast(`Appointment marked ${nextStatus.replaceAll("_", " ").toLowerCase()}`);
-    } catch (err) {
-      setError(err.message || "Unable to update appointment status.");
-    } finally {
-      setUpdatingAppointmentId(null);
-    }
-  }
-
   function handleCancelAppointment(appointmentId) {
     if (!token) {
       setError("Please log in to cancel appointments.");
@@ -1611,6 +1617,36 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
 
     setCancelError("");
     setCancelConfirmationId(appointmentId);
+  }
+
+  async function handleDeleteAppointment(appointment) {
+    if (!isSuperAdmin || !token || !clinicId) return;
+    setDeleteError("");
+    setDeleteConfirmationAppointment(appointment);
+  }
+
+  async function confirmDeleteAppointment() {
+    const appointment = deleteConfirmationAppointment;
+    if (!isSuperAdmin || !token || !clinicId || !appointment) return;
+
+    try {
+      setDeletingAppointmentId(appointment.id);
+      setDeleteError("");
+      await deleteClinicAppointment(clinicId, appointment.id, token);
+      setRows((items) => items.filter((item) => String(item.id) !== String(appointment.id)));
+      if (String(appointmentDetails?.id) === String(appointment.id)) closeAppointmentDetails();
+      setDeleteConfirmationAppointment(null);
+      showToast("Appointment deleted successfully");
+      if (rows.length === 1 && page > 0) {
+        setPage((currentPage) => currentPage - 1);
+      } else {
+        setRefreshKey((key) => key + 1);
+      }
+    } catch (err) {
+      setDeleteError(err.message || "Unable to delete appointment.");
+    } finally {
+      setDeletingAppointmentId(null);
+    }
   }
 
   async function confirmCancelAppointment() {
@@ -1715,23 +1751,6 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
     }
   }
 
-  function getAppointmentAction(appointment) {
-    const appointmentStatus = String(appointment.status || "").toUpperCase();
-    if (appointmentStatus === "CONFIRMED") {
-      return { label: "Check In", nextStatus: "CHECKED_IN" };
-    }
-    if (appointmentStatus === "CHECKED_IN") {
-      return { label: "Mark Waiting", nextStatus: "WAITING" };
-    }
-    if (appointmentStatus === "WAITING") {
-      return { label: "Start Consultation", nextStatus: "IN_CONSULTATION" };
-    }
-    if (appointmentStatus === "IN_CONSULTATION") {
-      return { label: "Mark Completed", nextStatus: "COMPLETED" };
-    }
-    return null;
-  }
-
   const canCancelAppointment = (appointment) => String(appointment.status || "").toUpperCase() !== "CANCELLED";
   const canMarkNoShow = (appointment) => String(appointment.status || "").toUpperCase() === "CHECKED_IN";
   const canCreateNextAppointment = (appointment) => String(appointment.status || "").toUpperCase() === "COMPLETED" && !appointment.followUpAppointmentId;
@@ -1752,9 +1771,8 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
     {!loading && !error && filteredRows.length === 0 && <div className="card-body"><p className="muted">No appointments found.</p></div>}
     {!loading && !error && filteredRows.length > 0 && <div className="table-wrap"><table><thead><tr><th>Patient</th><th>Service</th><th>Doctor</th><th>Date</th><th>Time</th><th>Status</th><th>Payment</th><th>Follow-Up</th><th>Action</th></tr></thead><tbody>
       {filteredRows.map((appointment) => {
-        const action = isAppointmentToday(appointment) ? getAppointmentAction(appointment) : null;
-        const isUpdating = updatingAppointmentId === appointment.id;
         const isCancelling = cancelingAppointmentId === appointment.id;
+        const isDeleting = deletingAppointmentId === appointment.id;
         const isCreatingNext = creatingNextAppointmentId === appointment.id;
         const isRescheduling = reschedulingAppointmentId === appointment.id;
         const appointmentStatus = String(appointment.status || "").toUpperCase();
@@ -1777,10 +1795,10 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
           <td>{appointment.suggestedFollowUpDate || "-"}</td>
           <td><div className="row-actions">
             <button className="btn btn-light icon-btn" title="View appointment details" aria-label="View appointment details" onClick={() => openAppointmentDetails(appointment.id)}>◉</button>
-            {action && <button className="btn btn-light icon-btn" title={isUpdating ? "Updating..." : action.label} disabled={isUpdating} onClick={() => handleStatusUpdate(appointment.id, action.nextStatus)} aria-label={isUpdating ? "Updating..." : action.label}>{isUpdating ? "…" : action.label === "Mark Completed" ? "✓" : "→"}</button>}
             {canCreateNextAppointment(appointment) && <button className="btn btn-light icon-btn" title={isCreatingNext ? "Creating..." : "Next Visit"} disabled={isCreatingNext} onClick={() => handleCreateNextAppointment(appointment)} aria-label={isCreatingNext ? "Creating..." : "Next Visit"}>{isCreatingNext ? "…" : "+"}</button>}
             {appointmentStatus !== "COMPLETED" && <button className="btn btn-light icon-btn" title={isRescheduling ? "Rescheduling..." : "Reschedule"} disabled={isRescheduling} onClick={() => handleRescheduleAppointment(appointment)} aria-label={isRescheduling ? "Rescheduling..." : "Reschedule"}>{isRescheduling ? "…" : "↺"}</button>}
             {canCancelAppointment(appointment) && <button className="btn btn-danger icon-btn" title={isCancelling ? "Cancelling..." : "Cancel"} disabled={isCancelling} onClick={() => handleCancelAppointment(appointment.id)} aria-label={isCancelling ? "Cancelling..." : "Cancel"}>{isCancelling ? "…" : "✕"}</button>}
+            {isSuperAdmin && <button type="button" className="btn btn-danger icon-btn" title={isDeleting ? "Deleting..." : "Delete appointment"} disabled={isDeleting} onClick={() => handleDeleteAppointment(appointment)} aria-label={isDeleting ? "Deleting appointment" : "Delete appointment"}>{isDeleting ? "…" : <svg aria-hidden="true" viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 5h14M8 5V3h4v2m3 0-.7 11H5.7L5 5m3 3v5m4-5v5" /></svg>}</button>}
           </div></td>
         </tr>;
       })}
@@ -1891,6 +1909,22 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
     {cancelError && <div className="auth-error">{cancelError}</div>}
     <p>Are you sure you want to cancel this appointment? This action cannot be undone.</p>
   </Modal>}
+  {deleteConfirmationAppointment && <Modal
+    title="Delete Appointment"
+    onClose={() => {
+      if (deletingAppointmentId === null) {
+        setDeleteConfirmationAppointment(null);
+        setDeleteError("");
+      }
+    }}
+    onSave={confirmDeleteAppointment}
+    saveLabel={deletingAppointmentId === deleteConfirmationAppointment.id ? "Deleting..." : "Delete Appointment"}
+    saveDisabled={deletingAppointmentId !== null}
+    saveClassName="btn btn-danger"
+  >
+    {deleteError && <div className="auth-error" role="alert">{deleteError}</div>}
+    <p>Are you sure you want to delete appointment #{deleteConfirmationAppointment.id}? This action cannot be undone.</p>
+  </Modal>}
   {scheduleModal && <Modal
     title={scheduleModal.mode === "next" ? "Create Next Visit" : "Reschedule Appointment"}
     onClose={() => setScheduleModal(null)}
@@ -1927,13 +1961,13 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   </>;
 }
 
-function Patients({ openModal, onEdit, showToast, clinicId, token }) {
+function Patients({ openModal, onEdit, showToast, clinicId, clinicName, token }) {
   const [patients, setPatients] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(5);
+  const [pageSize, setPageSize] = useState(10);
   const [pagination, setPagination] = useState(null);
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [history, setHistory] = useState([]);
@@ -1945,6 +1979,20 @@ function Patients({ openModal, onEdit, showToast, clinicId, token }) {
   const [qrImageUrl, setQrImageUrl] = useState("");
   const [qrLoading, setQrLoading] = useState(false);
   const [qrError, setQrError] = useState("");
+
+  const patientQrDisplayId = (() => {
+    if (!qrPatient) return "PT-0000";
+    const rawId = qrPatient.patientCode || qrPatient.patientId || qrPatient.registrationNumber || qrPatient.id;
+    if (!rawId && rawId !== 0) return "PT-0000";
+    if (typeof rawId === "string") {
+      const normalized = rawId.trim();
+      if (normalized.toUpperCase().startsWith("PT-")) return normalized;
+      if (normalized.length > 0) return normalized;
+    }
+    return `PT-${new Date().getFullYear()}-${String(rawId).padStart(4, "0")}`;
+  })();
+
+  const patientQrClinicName = clinicName || qrPatient?.clinicName || "Clinic";
 
   useEffect(() => {
     let cancelled = false;
@@ -2078,23 +2126,629 @@ function Patients({ openModal, onEdit, showToast, clinicId, token }) {
     {!historyLoading && !historyError && history.length > 0 && <div className="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Doctor</th><th>Service</th><th>Status</th><th>Follow-Up</th></tr></thead><tbody>{history.map((appointment) => <tr key={appointment.id}><td>{appointment.appointmentDate || "-"}</td><td>{formatTime(appointment.startTime)}</td><td>{appointment.doctorName || "-"}</td><td>{appointment.serviceName || "-"}</td><td><span className={`status ${String(appointment.status || "").toLowerCase()}`}>{appointment.status || "-"}</span></td><td>{appointment.suggestedFollowUpDate || "-"}</td></tr>)}</tbody></table></div>}
     {!historyLoading && !historyError && <div className="pagination"><button className="btn btn-light" disabled={historyPage === 0} onClick={() => setHistoryPage((value) => Math.max(0, value - 1))}>Previous</button><span className="pagination-meta">Page {historyPage + 1} of {Math.max(historyPagination?.totalPages || 1, 1)}</span><button className="btn btn-light" disabled={!historyPagination || historyPage >= (historyPagination.totalPages || 1) - 1} onClick={() => setHistoryPage((value) => value + 1)}>Next</button></div>}
   </Modal>}
-  {qrPatient && <Modal title={`${qrPatient.name} - Patient QR`} onClose={() => setQrPatient(null)} onSave={() => setQrPatient(null)} saveLabel="Close" saveDisabled={false}>
-    <div style={{ textAlign: "center" }}>
-      {qrLoading && <p className="muted">Loading QR code...</p>}
-      {qrError && <div className="auth-error">{qrError}</div>}
-      {qrImageUrl && <img
-        src={qrImageUrl}
-        alt={`QR code for ${qrPatient.name}`}
-        style={{ width: 400, height: 400, objectFit: "contain", border: "1px solid var(--border)", borderRadius: 10, maxWidth: "100%" }}
-      />}
-      <div className="quick-actions" style={{ justifyContent: "center", marginTop: 16 }}>
-        {qrImageUrl && <>
-          <a className="btn btn-outline" href={qrImageUrl} target="_blank" rel="noreferrer">Open QR Image</a>
-          <a className="btn btn-primary" href={qrImageUrl} download={`patient-${qrPatient.id}-qr.png`}>Download QR</a>
-        </>}
+  {qrPatient && <div className="patient-qr-overlay" onMouseDown={(event) => {
+    if (event.target === event.currentTarget) setQrPatient(null);
+  }}>
+    <div className="patient-qr-card">
+      <button className="patient-qr-close" type="button" aria-label="Close patient QR" onClick={() => setQrPatient(null)}>×</button>
+      <div className="patient-qr-summary">
+        <div className="patient-qr-patient-info">
+          <div className="patient-qr-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 21v-2a8 8 0 0 1 16 0v2Z" />
+            </svg>
+          </div>
+          <div className="patient-qr-summary-copy">
+            <span>PATIENT</span>
+            <strong className="patient-qr-name">{qrPatient.name}</strong>
+            <span className="patient-qr-id">ID: {patientQrDisplayId}</span>
+          </div>
+        </div>
+        <div className="patient-qr-clinic-info">
+          <svg className="patient-qr-clinic-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M3 21V9l5-3v15M8 21V4l8-2v19M16 21v-9l5-3v12M1 21h22" />
+            <path d="M11 7h2m-2 4h2m-2 4h2M5 12h1m13 1h1" />
+          </svg>
+          <div className="patient-qr-summary-copy">
+            <strong className="patient-qr-clinic-name">{patientQrClinicName}</strong>
+            {/* <span>CLINIC ID</span> */}
+            {/* <strong className="patient-qr-clinic-id">{clinicId}</strong> */}
+          </div>
+        </div>
+      </div>
+
+      <div className="patient-qr-qr-panel">
+        {qrLoading && <p className="muted patient-qr-status">Loading QR code...</p>}
+        {qrError && <div className="auth-error patient-qr-status">{qrError}</div>}
+        {qrImageUrl && <div className="patient-qr-code-wrap">
+          <img src={qrImageUrl} alt={`QR code for ${qrPatient.name}`} />
+        </div>}
+      </div>
+
+      <div className="patient-qr-footer">
+        <div className="patient-qr-phone-icon">📱</div>
+        <div>
+          <strong>Scan this QR code</strong>
+          <span>to book your appointments and more.</span>
+        </div>
       </div>
     </div>
-  </Modal>}
+  </div>}
+  </>;
+}
+
+function ReceptionDesk({ clinicId, token, search, openModal, showToast, onUpdatePatient }) {
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const date = new Date();
+    date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+    return date.toISOString().slice(0, 10);
+  });
+  const [activeTab, setActiveTab] = useState("ALL");
+  const [patientQuery, setPatientQuery] = useState("");
+  const [doctorFilter, setDoctorFilter] = useState("");
+  const [receptionDoctors, setReceptionDoctors] = useState([]);
+  const [appointments, setAppointments] = useState([]);
+  const [pagination, setPagination] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [updatingAppointmentId, setUpdatingAppointmentId] = useState(null);
+  const [paymentAppointment, setPaymentAppointment] = useState(null);
+  const [viewingAppointment, setViewingAppointment] = useState(null);
+  const [qrScanOpen, setQrScanOpen] = useState(false);
+  const [qrScanValue, setQrScanValue] = useState("");
+  const [qrAppointment, setQrAppointment] = useState(null);
+  const [qrScanLoading, setQrScanLoading] = useState(false);
+  const [qrCheckInLoading, setQrCheckInLoading] = useState(false);
+  const [qrScanError, setQrScanError] = useState("");
+  const [qrCheckInResult, setQrCheckInResult] = useState(null);
+  const [qrCameraActive, setQrCameraActive] = useState(false);
+  const qrScanInputRef = useRef(null);
+  const qrVideoRef = useRef(null);
+
+  useEffect(() => {
+    if (qrScanOpen && !qrAppointment) qrScanInputRef.current?.focus();
+  }, [qrScanOpen, qrAppointment]);
+
+  useEffect(() => {
+    if (!qrCameraActive || !qrScanOpen || qrAppointment) return undefined;
+
+    let cancelled = false;
+    let stream;
+    let scanTimer;
+    let scanning = false;
+
+    async function startCameraScanner() {
+      const BarcodeDetectorApi = window.BarcodeDetector;
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setQrScanError("Camera access is unavailable. Open this site over HTTPS or localhost, or paste the QR URL instead.");
+        setQrCameraActive(false);
+        return;
+      }
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: "environment" } },
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        const video = qrVideoRef.current;
+        if (!video) throw new Error("Camera preview is unavailable.");
+        video.srcObject = stream;
+        await video.play();
+
+        const detector = typeof BarcodeDetectorApi === "function"
+          ? new BarcodeDetectorApi({ formats: ["qr_code"] })
+          : null;
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (!context) throw new Error("Unable to initialize the QR camera scanner.");
+
+        async function scanVideoFrame() {
+          if (cancelled) return;
+          if (scanning || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+            scanTimer = window.setTimeout(scanVideoFrame, 200);
+            return;
+          }
+
+          scanning = true;
+          try {
+            let decodedValue = "";
+            if (detector) {
+              const results = await detector.detect(video);
+              decodedValue = results.find((result) => result.rawValue)?.rawValue || "";
+            } else {
+              const scale = Math.min(1, 640 / video.videoWidth);
+              canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+              canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+              context.drawImage(video, 0, 0, canvas.width, canvas.height);
+              const image = context.getImageData(0, 0, canvas.width, canvas.height);
+              decodedValue = jsQR(image.data, image.width, image.height, { inversionAttempts: "attemptBoth" })?.data || "";
+            }
+            if (decodedValue && !cancelled) {
+              setQrScanValue(decodedValue);
+              setQrCameraActive(false);
+              await verifyAppointmentQr(decodedValue);
+              return;
+            }
+          } catch (err) {
+            if (!cancelled) {
+              setQrScanError(err.message || "Unable to read the QR code from the camera.");
+              setQrCameraActive(false);
+            }
+            return;
+          } finally {
+            scanning = false;
+          }
+
+          if (!cancelled) scanTimer = window.setTimeout(scanVideoFrame, 200);
+        }
+
+        scanVideoFrame();
+      } catch (err) {
+        if (!cancelled) {
+          const message = err.name === "NotAllowedError"
+            ? "Camera permission was denied. Allow camera access in your browser settings or paste the QR URL instead."
+            : err.name === "NotFoundError"
+              ? "No camera was found. Connect a camera or paste the QR URL instead."
+              : err.message || "Unable to start the camera scanner.";
+          setQrScanError(message);
+          setQrCameraActive(false);
+        }
+      }
+    }
+
+    startCameraScanner();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(scanTimer);
+      if (stream) stream.getTracks().forEach((track) => track.stop());
+      if (qrVideoRef.current) qrVideoRef.current.srcObject = null;
+    };
+  }, [qrCameraActive, qrScanOpen, qrAppointment, clinicId, token]);
+
+  function closeQrScanner() {
+    setQrScanOpen(false);
+    setQrCameraActive(false);
+    setQrScanValue("");
+    setQrAppointment(null);
+    setQrScanError("");
+    setQrCheckInResult(null);
+  }
+
+  function extractAppointmentQrToken(value) {
+    const scannedValue = String(value || "").trim();
+    if (!scannedValue) return "";
+
+    try {
+      const parsedUrl = new URL(scannedValue);
+      const tokenFromUrl = parsedUrl.searchParams.get("token");
+      if (tokenFromUrl) return tokenFromUrl.trim();
+    } catch {
+      const query = scannedValue.startsWith("?") ? scannedValue.slice(1) : scannedValue;
+      const tokenFromQuery = new URLSearchParams(query).get("token");
+      if (tokenFromQuery) return tokenFromQuery.trim();
+    }
+
+    return scannedValue;
+  }
+
+  async function verifyAppointmentQr(value = qrScanValue) {
+    const qrToken = extractAppointmentQrToken(value);
+    if (!qrToken) {
+      setQrScanError("Scan or enter a patient appointment QR code first.");
+      return;
+    }
+    if (!clinicId || !token) {
+      setQrScanError(!token ? "Please log in to verify appointment QR codes." : "Please select a clinic.");
+      return;
+    }
+
+    try {
+      setQrScanLoading(true);
+      setQrScanError("");
+      setQrAppointment(null);
+      setQrCheckInResult(null);
+      const details = await getAppointmentByQrToken(clinicId, qrToken, token);
+      if (!details || (details.appointmentId == null && details.id == null)) {
+        throw new Error("Appointment details were not returned for this QR code.");
+      }
+      setQrAppointment({ ...details, qrToken });
+    } catch (err) {
+      setQrScanError(err.message || "Unable to verify this appointment QR code.");
+    } finally {
+      setQrScanLoading(false);
+    }
+  }
+
+  async function checkInScannedAppointment() {
+    if (!qrAppointment || !qrAppointment.qrToken || qrCheckInLoading || qrCheckInResult) return;
+
+    try {
+      setQrCheckInLoading(true);
+      setQrScanError("");
+      const result = await checkInAppointmentByQrToken(clinicId, qrAppointment.qrToken, token);
+      setQrCheckInResult(result);
+      const checkedInAppointmentId = result?.appointmentId ?? qrAppointment.appointmentId ?? qrAppointment.id;
+      setAppointments((items) => items.map((appointment) => String(appointment.id) === String(checkedInAppointmentId)
+        ? {
+            ...appointment,
+            status: "CHECKED_IN",
+            queueToken: result?.queueToken || appointment.queueToken,
+            queueNumber: result?.queueNumber ?? appointment.queueNumber,
+          }
+        : appointment));
+      showToast(`Appointment checked in${result?.queueToken ? ` · Queue ${result.queueToken}` : ""}`);
+    } catch (err) {
+      setQrScanError(err.message || "Unable to check in this appointment.");
+    } finally {
+      setQrCheckInLoading(false);
+    }
+  }
+
+  async function handleQrScanSubmit() {
+    if (qrAppointment) {
+      await checkInScannedAppointment();
+    } else {
+      await verifyAppointmentQr();
+    }
+  }
+
+  function resetQrVerification() {
+    setQrCameraActive(false);
+    setQrScanValue("");
+    setQrAppointment(null);
+    setQrScanError("");
+    setQrCheckInResult(null);
+  }
+
+  function formatQrAppointmentDateTime(dateValue, timeValue) {
+    if (!dateValue) return "-";
+    const dateString = String(dateValue).slice(0, 10);
+    const parsedDate = new Date(`${dateString}T00:00:00`);
+    const dateLabel = Number.isNaN(parsedDate.getTime())
+      ? dateString
+      : parsedDate.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+    const timeLabel = timeValue ? formatTime(String(timeValue).slice(0, 5)) : "";
+    return timeLabel ? `${dateLabel} · ${timeLabel}` : dateLabel;
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadReceptionDoctors() {
+      if (!token || !clinicId) {
+        setReceptionDoctors([]);
+        setDoctorFilter("");
+        return;
+      }
+
+      try {
+        const doctors = await getClinicDoctors(clinicId, token);
+        if (!cancelled) setReceptionDoctors(Array.isArray(doctors) ? doctors : []);
+      } catch (err) {
+        if (!cancelled) {
+          setReceptionDoctors([]);
+          showToast(err.message || "Unable to load doctors.");
+        }
+      }
+    }
+
+    setDoctorFilter("");
+    loadReceptionDoctors();
+    return () => { cancelled = true; };
+  }, [clinicId, token]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadReceptionAppointments() {
+      if (!token || !clinicId || !selectedDate) {
+        setAppointments([]);
+        setPagination(null);
+        setLoading(false);
+        setError(!token ? "Please log in to view appointments." : "Please select a clinic and date.");
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError("");
+        const result = await getClinicAppointments(clinicId, {
+          from: selectedDate,
+          to: selectedDate,
+          page: 0,
+          size: 100,
+        }, token);
+        if (!cancelled) {
+          setAppointments(Array.isArray(result) ? result : result?.items || []);
+          setPagination(result?.pagination || null);
+        }
+      } catch (err) {
+        if (!cancelled) setError(err.message || "Unable to load reception appointments.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadReceptionAppointments();
+    return () => { cancelled = true; };
+  }, [clinicId, token, selectedDate, refreshKey]);
+
+  const normalizedAppointments = appointments.map((appointment) => ({
+    ...appointment,
+    status: String(appointment.status || "").toUpperCase(),
+    paymentStatus: String(appointment.paymentStatus || "-").toUpperCase(),
+  }));
+  const tabDefinitions = [
+    { id: "ALL", label: "Today's Patients", filter: () => true },
+    { id: "CHECKED_IN", label: "Checked In", filter: (item) => item.status === "CHECKED_IN" },
+    { id: "WAITING", label: "Waiting", filter: (item) => item.status === "WAITING" },
+    { id: "IN_CONSULTATION", label: "In Consultation", filter: (item) => item.status === "IN_CONSULTATION" },
+    { id: "COMPLETED", label: "Completed", filter: (item) => item.status === "COMPLETED" },
+  ];
+  const counts = Object.fromEntries(tabDefinitions.map((tab) => [tab.id, normalizedAppointments.filter(tab.filter).length]));
+  const query = `${search} ${patientQuery}`.trim().toLowerCase();
+  const selectedDoctor = receptionDoctors.find((doctor) => String(doctor.id) === String(doctorFilter));
+  const visibleAppointments = normalizedAppointments.filter((appointment) => {
+    const selectedTab = tabDefinitions.find((tab) => tab.id === activeTab);
+    const matchesTab = selectedTab ? selectedTab.filter(appointment) : true;
+    const appointmentDoctorId = appointment.doctorId ?? appointment.doctor?.id;
+    const appointmentDoctorName = appointment.doctorName || appointment.doctor?.name || appointment.doctor?.fullName || "";
+    const matchesDoctor = !selectedDoctor
+      || (appointmentDoctorId != null
+        ? String(appointmentDoctorId) === String(selectedDoctor.id)
+        : appointmentDoctorName.toLowerCase() === String(selectedDoctor.name || selectedDoctor.fullName || "").toLowerCase());
+    const matchesQuery = !query || [appointment.patientName, appointment.phoneNo, appointment.patientPhone, appointment.appointmentCode, appointment.serviceName, appointment.doctorName]
+      .some((value) => String(value || "").toLowerCase().includes(query));
+    return matchesTab && matchesDoctor && matchesQuery;
+  });
+  const scannedQrStatus = String(qrAppointment?.qrStatus || "ACTIVE").toUpperCase();
+  const scannedAppointmentStatus = String(qrAppointment?.appointmentStatus || qrAppointment?.status || "").toUpperCase();
+  const scannedPatientProfileStatus = String(qrAppointment?.patientProfileStatus || qrAppointment?.patient?.patientProfileStatus || "").toUpperCase();
+  const scannedPatientId = qrAppointment?.patient?.id ?? qrAppointment?.patientId ?? qrAppointment?.patient?.patientId;
+  const scannedAppointmentAlreadyCheckedIn = ["CHECKED_IN", "WAITING", "IN_CONSULTATION", "COMPLETED"].includes(scannedAppointmentStatus);
+  const canCheckInScannedAppointment = scannedQrStatus === "ACTIVE" && !scannedAppointmentAlreadyCheckedIn;
+
+  async function changeReceptionStatus(appointment, nextStatus) {
+    try {
+      setUpdatingAppointmentId(appointment.id);
+      setError("");
+      const updated = nextStatus === "CHECKED_IN"
+        ? await checkInAppointment(appointment.id, token)
+        : await updateAppointmentStatus(appointment.id, nextStatus, token);
+      setAppointments((items) => items.map((item) => String(item.id) === String(appointment.id)
+        ? { ...item, ...(updated || {}), status: updated?.status || nextStatus }
+        : item));
+      showToast(nextStatus === "CHECKED_IN"
+        ? `Patient checked in${updated?.queueToken ? ` · Queue ${updated.queueToken}` : ""}`
+        : `Appointment marked ${nextStatus.replaceAll("_", " ").toLowerCase()}`);
+    } catch (err) {
+      setError(err.message || "Unable to update appointment status.");
+    } finally {
+      setUpdatingAppointmentId(null);
+    }
+  }
+
+  function getReceptionAction(status) {
+    if (status === "CONFIRMED") return { label: "Check In", nextStatus: "CHECKED_IN" };
+    if (status === "CHECKED_IN") return { label: "Add to Queue", nextStatus: "WAITING" };
+    if (status === "WAITING") return { label: "Start Consultation", nextStatus: "IN_CONSULTATION" };
+    return null;
+  }
+
+  function handleReceptionPaymentCollected(payment) {
+    setAppointments((items) => items.map((item) => String(item.id) === String(paymentAppointment.id)
+      ? { ...item, paymentStatus: payment?.status || item.paymentStatus }
+      : item));
+  }
+
+  return <>
+    <section className="page active reception-page">
+      <div className="card reception-card">
+        <div className="card-header reception-header">
+          <div><h3>Reception Desk</h3><p>Check in patients, collect payments, and manage the OPD queue.</p></div>
+          <div className="reception-header-actions">
+            <input className="control reception-date" type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} aria-label="Reception date" />
+            <button className="btn btn-outline reception-scan-qr" onClick={() => {
+              resetQrVerification();
+              setQrScanOpen(true);
+            }}>Scan Patient QR</button>
+            <button className="btn btn-primary" onClick={() => openModal("appointment")}>+ New Appointment</button>
+          </div>
+        </div>
+        <div className="reception-toolbar">
+          <div className="reception-tabs" role="tablist" aria-label="Appointment status">
+            {tabDefinitions.map((tab) => <button key={tab.id} role="tab" aria-selected={activeTab === tab.id} className={`reception-tab ${activeTab === tab.id ? "active" : ""}`} onClick={() => setActiveTab(tab.id)}>{tab.label} <span>{counts[tab.id]}</span></button>)}
+          </div>
+          <div className="reception-filters">
+            <select className="control reception-doctor-filter" aria-label="Filter by doctor" value={doctorFilter} onChange={(event) => setDoctorFilter(event.target.value)}>
+              <option value="">All Doctors</option>
+              {receptionDoctors.map((doctor) => <option key={doctor.id} value={doctor.id}>{doctor.name || doctor.fullName || `Doctor ${doctor.id}`}</option>)}
+            </select>
+            <input className="control reception-search" type="search" placeholder="Search by name, phone, or ID" value={patientQuery} onChange={(event) => setPatientQuery(event.target.value)} />
+          </div>
+        </div>
+        {error && <div className="auth-error reception-error">{error}</div>}
+        {loading && <div className="card-body"><p className="muted">Loading today&apos;s patients...</p></div>}
+        {!loading && !error && visibleAppointments.length === 0 && <div className="card-body"><p className="muted">No appointments found for this view.</p></div>}
+        {!loading && !error && visibleAppointments.length > 0 && <div className="table-wrap reception-table-wrap">
+          <table className="reception-table"><thead><tr><th>#</th><th>Time</th><th>Patient</th><th>Appointment Id</th><th>Doctor</th><th>Check-in</th><th>Payment</th><th>Queue</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>{visibleAppointments.map((appointment, index) => {
+              const action = getReceptionAction(appointment.status);
+              const paymentStatus = String(appointment.paymentStatus || "-").toUpperCase();
+              const paymentClass = { UNPAID: "pending", PARTIAL: "in_progress", PAID: "completed", REFUNDED: "cancelled" }[paymentStatus] || "";
+              const canCollect = appointment.status === "COMPLETED" && ["UNPAID", "PARTIAL"].includes(paymentStatus);
+              const paymentDue = appointment.remainingAmount ?? appointment.amountDue;
+              const isUpdating = String(updatingAppointmentId) === String(appointment.id);
+              return <tr key={appointment.id}>
+                <td>{index + 1}</td>
+                <td>{formatTime(appointment.startTime || appointment.time)}</td>
+                <td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "Unknown patient"}</strong><span>{appointment.phoneNo || appointment.patientPhone || "-"}</span></div></div></td>
+                <td>{appointment.id ?? "-"}</td>
+                <td>{appointment.doctorName || appointment.doctor?.name || appointment.doctor?.fullName || "-"}</td>
+                <td><span className={`reception-checkin ${appointment.status === "CHECKED_IN" || ["WAITING", "IN_CONSULTATION", "COMPLETED"].includes(appointment.status) ? "checked" : ""}`}>{["CHECKED_IN", "WAITING", "IN_CONSULTATION", "COMPLETED"].includes(appointment.status) ? "Checked In" : "Not Arrived"}</span>{appointment.checkInTime && <small>{formatTime(appointment.checkInTime)}</small>}</td>
+                <td>{canCollect ? <button className={`status ${paymentClass} reception-payment-button`} onClick={() => setPaymentAppointment(appointment)}>{paymentStatus}{paymentDue == null ? "" : ` · ${formatCurrency(paymentDue)}`}</button> : <span className={`status ${paymentClass}`}>{paymentStatus}</span>}</td>
+                <td>{appointment.queueToken || appointment.queueNumber || appointment.queueCode || "-"}</td>
+                <td><span className={`status ${appointment.status === "IN_CONSULTATION" ? "in_progress" : appointment.status.toLowerCase()}`}>{appointment.status || "-"}</span></td>
+                <td><div className="reception-row-actions"><button className="btn btn-outline reception-action" onClick={() => setViewingAppointment(appointment)}>View</button>{action ? <button className="btn btn-light reception-action" disabled={isUpdating} onClick={() => changeReceptionStatus(appointment, action.nextStatus)}>{isUpdating ? "Updating..." : action.label}</button> : <span className="muted">-</span>}</div></td>
+              </tr>;
+            })}</tbody>
+          </table>
+        </div>}
+        {!loading && pagination?.totalElements > 100 && <div className="pagination"><span>Showing the first 100 appointments for this date.</span><button className="btn btn-outline" onClick={() => setRefreshKey((key) => key + 1)}>Refresh</button></div>}
+        {!loading && !pagination?.totalElements && appointments.length > 0 && <div className="pagination"><span>{appointments.length} appointment{appointments.length === 1 ? "" : "s"}</span><button className="btn btn-outline" onClick={() => setRefreshKey((key) => key + 1)}>Refresh</button></div>}
+      </div>
+    </section>
+    {qrScanOpen && <Modal
+      title="Verify Patient & Appointment"
+      className="appointment-qr-modal"
+      onClose={closeQrScanner}
+      cancelLabel="Close"
+      onSave={async () => {
+        if (!qrAppointment) {
+          await verifyAppointmentQr();
+        } else if (qrCheckInResult) {
+          closeQrScanner();
+        } else if (canCheckInScannedAppointment) {
+          await checkInScannedAppointment();
+        } else {
+          resetQrVerification();
+        }
+      }}
+      saveLabel={qrScanLoading ? "Verifying..." : qrCheckInLoading ? "Checking In..." : qrCheckInResult ? "Done" : qrAppointment ? canCheckInScannedAppointment ? "Check In" : "Scan Another QR" : "Verify QR Code"}
+      saveDisabled={qrScanLoading || qrCheckInLoading || (!qrAppointment && !qrScanValue.trim())}
+    >
+      <div className="appointment-qr-verification">
+        {!qrAppointment && <>
+          <label className="field">
+            <span>Scan Patient Appointment QR</span>
+            <input
+              ref={qrScanInputRef}
+              autoComplete="off"
+              autoFocus
+              value={qrScanValue}
+              onChange={(event) => setQrScanValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  verifyAppointmentQr();
+                }
+              }}
+              placeholder="Scan or paste the QR code URL"
+              disabled={qrScanLoading}
+            />
+          </label>
+          <div className="qr-scanner-options">
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={qrScanLoading}
+              onClick={() => {
+                setQrScanError("");
+                setQrCameraActive((active) => !active);
+              }}
+            >
+              {qrCameraActive ? "Stop Camera" : "Use Camera Scanner"}
+            </button>
+            <span className="muted">Or use a connected QR scanner or paste the QR URL above.</span>
+          </div>
+          {qrCameraActive && <div className="qr-camera-preview">
+            <video ref={qrVideoRef} autoPlay muted playsInline aria-label="Live QR code camera preview" />
+            <span>Point the camera at the patient appointment QR code.</span>
+          </div>}
+        </>}
+
+        {qrScanLoading && <div className="qr-verification-banner loading" role="status">Verifying appointment QR code...</div>}
+        {qrScanError && <div className="auth-error qr-verification-error" role="alert">{qrScanError}</div>}
+
+        {qrAppointment && <>
+          <div className={`qr-verification-banner ${scannedQrStatus === "ACTIVE" ? "valid" : "invalid"}`} role="status">
+            <span className="qr-verification-mark">{scannedQrStatus === "ACTIVE" ? "✓" : "!"}</span>
+            <span>
+              <strong>{scannedQrStatus === "ACTIVE" ? "Valid QR Code" : `${scannedQrStatus} QR Code`}</strong>
+              <small>{scannedQrStatus === "ACTIVE" ? "Appointment found. Please verify the details." : "This QR code is not active and cannot be used to check in."}</small>
+            </span>
+          </div>
+          <section className="qr-appointment-details" aria-label="Verified appointment details">
+            <header className="qr-appointment-patient">
+              <div className="appointment-overview-avatar">{initials({ firstName: qrAppointment.patientName })}</div>
+              <div>
+                <div className="qr-appointment-name-line">
+                  <strong>{qrAppointment.patientName || "Unknown patient"}</strong>
+                  {scannedPatientProfileStatus && <span className="qr-patient-type">{scannedPatientProfileStatus}</span>}
+                </div>
+                <span>Patient ID: {scannedPatientId || qrAppointment.patientCode || "-"}</span>
+                <span>{qrAppointment.phoneNo || qrAppointment.patientPhone || qrAppointment.patient?.phoneNo || "-" }{(qrAppointment.email || qrAppointment.patient?.email) ? ` | ${qrAppointment.email || qrAppointment.patient.email}` : ""}</span>
+                {scannedPatientProfileStatus === "INCOMPLETE" && scannedPatientId && <button type="button" className="btn btn-outline qr-update-patient" onClick={() => {
+                  const patient = {
+                    ...qrAppointment.patient,
+                    id: scannedPatientId,
+                    name: qrAppointment.patient?.name || qrAppointment.patientName,
+                    whatsappNumber: qrAppointment.patient?.whatsappNumber || qrAppointment.phoneNo || qrAppointment.patientPhone || qrAppointment.patient?.phoneNo,
+                    email: qrAppointment.patient?.email || qrAppointment.email,
+                    dateOfBirth: qrAppointment.patient?.dateOfBirth || qrAppointment.dateOfBirth,
+                    gender: qrAppointment.patient?.gender || qrAppointment.gender,
+                  };
+                  closeQrScanner();
+                  onUpdatePatient(patient);
+                }}>Update Patient</button>}
+              </div>
+            </header>
+            <dl className="qr-appointment-fields">
+              <div><dt>Appointment #</dt><dd>{qrAppointment.appointmentCode || qrAppointment.AppointmentCode || qrAppointment.appointmentNumber || qrAppointment.appointmentId}</dd></div>
+              <div><dt>Clinic</dt><dd>{qrAppointment.clinicName || "-"}</dd></div>
+              <div><dt>Doctor</dt><dd>{qrAppointment.doctorName || "-"}</dd></div>
+              <div><dt>Date &amp; Time</dt><dd>{formatQrAppointmentDateTime(qrAppointment.appointmentDate, qrAppointment.appointmentTime || qrAppointment.startTime)}</dd></div>
+              <div><dt>Service</dt><dd>{qrAppointment.serviceName || "-"}</dd></div>
+              <div><dt>Appointment Status</dt><dd>{scannedAppointmentStatus || "-"}</dd></div>
+            </dl>
+          </section>
+        </>}
+
+        {qrCheckInResult && <div className="qr-checkin-success" role="status">
+          <strong>Appointment has been checked in.</strong>
+          {qrCheckInResult.queueToken && <span>Queue token: {qrCheckInResult.queueToken}</span>}
+        </div>}
+        {qrAppointment && !qrCheckInResult && !canCheckInScannedAppointment && <div className="qr-checkin-notice">
+          {scannedQrStatus !== "ACTIVE" ? "Check-in is unavailable because this QR code is not active." : "This appointment has already been checked in or completed."}
+        </div>}
+        {qrAppointment && <button type="button" className="btn btn-outline qr-scan-another" onClick={resetQrVerification}>Scan Another QR</button>}
+      </div>
+    </Modal>}
+    {viewingAppointment && <Modal
+      title="Appointment Overview"
+      className="appointment-overview-modal"
+      onClose={() => setViewingAppointment(null)}
+      onSave={() => setViewingAppointment(null)}
+      saveLabel="Close"
+    >
+      <div className="appointment-overview">
+        <div className="appointment-overview-summary">
+          <span className={`status ${viewingAppointment.status === "IN_CONSULTATION" ? "in_progress" : String(viewingAppointment.status || "").toLowerCase()}`}>{viewingAppointment.status || "-"}</span>
+          <div><small>Appointment ID</small><strong>#{viewingAppointment.id ?? "-"}</strong></div>
+          <div className="appointment-overview-date"><span aria-hidden="true">▦</span><div><small>Date &amp; Time</small><strong>{viewingAppointment.appointmentDate || selectedDate} · {formatTime(viewingAppointment.startTime || viewingAppointment.time)}</strong></div></div>
+        </div>
+        <div className="appointment-overview-grid">
+          <section className="appointment-overview-section"><h4><span aria-hidden="true">♙</span>Patient Information</h4><div className="appointment-patient-overview"><div className="appointment-overview-avatar">{initials({ firstName: viewingAppointment.patientName })}</div><div><strong>{viewingAppointment.patientName || "Unknown patient"}</strong><span>{viewingAppointment.phoneNo || viewingAppointment.patientPhone || "-"}</span></div></div></section>
+          <section className="appointment-overview-section"><h4><span aria-hidden="true">✚</span>Consultation Details</h4><div className="appointment-overview-detail"><span>Doctor</span><strong>{viewingAppointment.doctorName || viewingAppointment.doctor?.name || "-"}</strong></div><div className="appointment-overview-detail"><span>Service</span><strong>{viewingAppointment.serviceName || viewingAppointment.service?.name || "-"}</strong></div><div className="appointment-overview-detail"><span>Appointment Code</span><strong>{viewingAppointment.appointmentCode || "-"}</strong></div></section>
+          <section className="appointment-overview-section"><div className="appointment-overview-section-heading"><h4><span aria-hidden="true">▤</span>Payment Information</h4><span className={`status ${String(viewingAppointment.paymentStatus || "").toLowerCase()}`}>{viewingAppointment.paymentStatus || "-"}</span></div><div className="appointment-overview-detail"><span>Amount Due</span><strong>{viewingAppointment.remainingAmount == null && viewingAppointment.amountDue == null ? "-" : formatCurrency(viewingAppointment.remainingAmount ?? viewingAppointment.amountDue)}</strong></div><div className="appointment-overview-detail"><span>Payment Method</span><strong>{viewingAppointment.paymentMethod || "-"}</strong></div></section>
+          <section className="appointment-overview-section"><h4><span aria-hidden="true">▦</span>Queue Information</h4><div className="appointment-overview-detail"><span>Queue Number</span><strong>{viewingAppointment.queueNumber || viewingAppointment.queueCode || "-"}</strong></div><div className="appointment-overview-detail"><span>Suggested Follow-up</span><strong>{viewingAppointment.suggestedFollowUpDate || "-"}</strong></div><div className="appointment-overview-detail"><span>Source</span><strong>{viewingAppointment.source || viewingAppointment.bookingSource || "-"}</strong></div></section>
+        </div>
+      </div>
+    </Modal>}
+    {paymentAppointment && <AppointmentPaymentDialog
+      appointment={paymentAppointment}
+      token={token}
+      onClose={() => setPaymentAppointment(null)}
+      onPaymentCollected={handleReceptionPaymentCollected}
+      showToast={showToast}
+    />}
   </>;
 }
 
@@ -2604,7 +3258,7 @@ function Reports({ showToast }) {
   </section>;
 }
 
-function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }) {
+function Settings({ showToast, clinicId, clinicName, token, canViewClinicProfile }) {
   const clinicProfileFormRef = useRef(null);
   const [form, setForm] = useState({
     name: "Sunrise Multispeciality",
@@ -2647,12 +3301,15 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
     { day: "SUNDAY", active: false, start: "09:00", end: "15:00", breakStart: "13:00", breakEnd: "14:00" },
   ];
   const [doctorAvailabilitySaving, setDoctorAvailabilitySaving] = useState(false);
+  const [doctorAvailabilityLoading, setDoctorAvailabilityLoading] = useState(false);
+  const [doctorAvailabilityError, setDoctorAvailabilityError] = useState("");
   const [doctorAvailability, setDoctorAvailability] = useState(defaultDoctorAvailability);
   const [availableDoctors, setAvailableDoctors] = useState([]);
-  const [selectedDoctorId, setSelectedDoctorId] = useState(String(doctorId || ""));
+  const [selectedDoctorId, setSelectedDoctorId] = useState("");
   const [activeTab, setActiveTab] = useState("profile");
   const [workingHours, setWorkingHours] = useState(DEFAULT_CLINIC_WORKING_HOURS);
   const [workingHoursLoading, setWorkingHoursLoading] = useState(false);
+  const clinicQrDisplayName = clinicName || clinicQr?.clinicName || clinicQr?.clinic?.name || form.name || "Clinic";
 
   useEffect(() => {
     let cancelled = false;
@@ -2724,9 +3381,7 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
         const doctors = Array.isArray(result) ? result : [];
         if (!cancelled) {
           setAvailableDoctors(doctors);
-          setSelectedDoctorId((currentId) => doctors.some((doctor) => String(doctor.id) === String(currentId))
-            ? currentId
-            : String(doctors[0]?.id || ""));
+          setSelectedDoctorId("");
         }
       } catch (err) {
         if (!cancelled) {
@@ -2866,10 +3521,14 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
     async function loadDoctorAvailabilitySchedule() {
       if (!token || !clinicId || !selectedDoctorId) {
         setDoctorAvailability(defaultDoctorAvailability);
+        setDoctorAvailabilityLoading(false);
+        setDoctorAvailabilityError("");
         return;
       }
 
       try {
+        setDoctorAvailabilityLoading(true);
+        setDoctorAvailabilityError("");
         const result = await getDoctorAvailability(clinicId, Number(selectedDoctorId), token);
         const items = Array.isArray(result)
           ? result
@@ -2897,7 +3556,12 @@ function Settings({ showToast, clinicId, token, canViewClinicProfile, doctorId }
 
         setDoctorAvailability(mapped);
       } catch (err) {
-        if (!cancelled) setDoctorAvailability(defaultDoctorAvailability);
+        if (!cancelled) {
+          setDoctorAvailability(defaultDoctorAvailability);
+          setDoctorAvailabilityError(err.message || "Unable to load doctor availability.");
+        }
+      } finally {
+        if (!cancelled) setDoctorAvailabilityLoading(false);
       }
     }
 
@@ -3264,6 +3928,7 @@ const handleWhatsAppSignupResponse = async (response) => {
       <button className={activeTab === "doctor" ? "active" : ""} onClick={() => setActiveTab("doctor")}>Doctor Availability</button>
       <button className={activeTab === "hours" ? "active" : ""} onClick={() => setActiveTab("hours")}>Working Hours</button>
       <button className={activeTab === "whatsapp" ? "active" : ""} onClick={() => setActiveTab("whatsapp")}>WhatsApp Configuration</button>
+      <button className={activeTab === "policy" ? "active" : ""} onClick={() => setActiveTab("policy")}>Clinic Policy</button>
     </div>
     <div className="settings-main">
       {error && <div className="auth-error">{error}</div>}
@@ -3326,20 +3991,26 @@ const handleWhatsAppSignupResponse = async (response) => {
         <div className="form-grid mt">
           <div className="field">
             <label>Doctor</label>
-            <select value={selectedDoctorId} onChange={(e) => setSelectedDoctorId(e.target.value)} disabled={availableDoctors.length === 0}>
+            <select value={selectedDoctorId} onChange={(e) => {
+              setSelectedDoctorId(e.target.value);
+              setDoctorAvailabilityError("");
+            }} disabled={availableDoctors.length === 0}>
               <option value="">{availableDoctors.length === 0 ? "No doctors available" : "Select doctor"}</option>
               {availableDoctors.map((doctor) => <option key={doctor.id} value={doctor.id}>{doctor.name}</option>)}
             </select>
           </div>
         </div>
-        <div className="working-hours-list">
+        {!selectedDoctorId && <p className="muted">Select a doctor to view or edit availability.</p>}
+        {selectedDoctorId && doctorAvailabilityLoading && <p className="muted" role="status">Loading doctor availability...</p>}
+        {selectedDoctorId && doctorAvailabilityError && <div className="auth-error" role="alert">{doctorAvailabilityError}</div>}
+        {selectedDoctorId && !doctorAvailabilityLoading && !doctorAvailabilityError && <><div className="working-hours-list">
           {doctorAvailability.map((slot, index) => <div className={`working-hour-row ${slot.active ? "" : "disabled"}`} key={slot.day}>
             <label className="day-toggle"><input type="checkbox" checked={slot.active} onChange={(e) => setDoctorAvailability((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, active: e.target.checked } : item))} /><strong>{slot.day}</strong></label>
             <div className="working-time"><label>Start<input type="time" value={slot.start} disabled={!slot.active} onChange={(e) => setDoctorAvailability((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, start: e.target.value } : item))} /></label><span>to</span><label>End<input type="time" value={slot.end} disabled={!slot.active} onChange={(e) => setDoctorAvailability((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, end: e.target.value } : item))} /></label></div>
             <div className="working-time"><label>Break from<input type="time" value={slot.breakStart || ""} disabled={!slot.active} onChange={(e) => setDoctorAvailability((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, breakStart: e.target.value } : item))} /></label><span>to</span><label>Break to<input type="time" value={slot.breakEnd || ""} disabled={!slot.active} onChange={(e) => setDoctorAvailability((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, breakEnd: e.target.value } : item))} /></label></div>
           </div>)}
         </div>
-        <button className="btn btn-primary mt" onClick={handleDoctorAvailabilitySave} disabled={doctorAvailabilitySaving}>{doctorAvailabilitySaving ? "Saving..." : "Save Doctor Availability"}</button>
+        <button className="btn btn-primary mt" onClick={handleDoctorAvailabilitySave} disabled={doctorAvailabilitySaving}>{doctorAvailabilitySaving ? "Saving..." : "Save Doctor Availability"}</button></>}
       </div>}
       {activeTab === "hours" && <div className="working-hours mt">
         <h3>Working Hours</h3>
@@ -3414,14 +4085,41 @@ const handleWhatsAppSignupResponse = async (response) => {
           <p className="muted">Generate a WhatsApp QR code for this clinic.</p>
           <button className="btn btn-primary" onClick={handleClinicQrGenerate} disabled={clinicQrLoading}>{clinicQrLoading ? "Generating..." : "Generate Clinic QR Code"}</button>
           {clinicQrError && <div className="auth-error" style={{ marginTop: 12 }}>{clinicQrError}</div>}
-          {clinicQr?.image && <div style={{ marginTop: 16, textAlign: "center" }}>
-            <img src={clinicQr.image} alt="Clinic QR code" style={{ width: 400, height: 400, maxWidth: "100%", objectFit: "contain", border: "1px solid var(--border)", borderRadius: 10 }} />
-            <div className="quick-actions" style={{ justifyContent: "center", marginTop: 16 }}>
+          {clinicQr?.image && <div className="clinic-qr-preview">
+            <div className="patient-qr-card clinic-qr-card">
+              <div className="clinic-qr-header">
+                <div className="clinic-qr-brand">
+                  <img src={holaMdLogo} alt="" />
+                  <div>
+                    <strong>Hola MD</strong>
+                    <span>Your Health, Our Care</span>
+                  </div>
+                </div>
+                <div className="clinic-qr-name">
+                  <span className="clinic-qr-name-icon" aria-hidden="true">✚</span>
+                  <strong>{clinicQrDisplayName}</strong>
+                </div>
+              </div>
+              <div className="patient-qr-qr-panel">
+                <div className="patient-qr-code-wrap">
+                  <img src={clinicQr.image} alt={`WhatsApp QR code for ${clinicQrDisplayName}`} />
+                </div>
+              </div>
+              <div className="patient-qr-footer clinic-qr-footer">
+                <img className="clinic-qr-whatsapp-icon" src={whatsAppIcon} alt="" />
+                <div className="clinic-qr-footer-copy">
+                  <strong>Scan this QR code</strong>
+                  <span>Book your first appointment with {clinicQrDisplayName} on WhatsApp.</span>
+                </div>
+              </div>
+            </div>
+            <div className="quick-actions" style={{ justifyContent: "center", marginTop: 12 }}>
               <button className="btn btn-outline" onClick={() => window.open(clinicQr.image, "_blank", "noopener,noreferrer")}>Open QR Image</button>
               <a className="btn btn-primary" href={clinicQr.image} download={`clinic-${clinicId}-qr.png`}>Download QR</a>
             </div>
           </div>}
         </div>
       </div>}
+      {activeTab === "policy" && <ClinicPolicySettings clinicId={clinicId} token={token} showToast={showToast} />}
       </div></div></div></section>;
 }
