@@ -3,7 +3,7 @@ import { useEffect, useMemo,useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import Subscriptions from "./Subscriptions";
 import ClinicPolicySettings from "./ClinicPolicySettings";
-import holaMdLogo from "../assets/logo/holamd-new-logo.png";
+import holaMdLogo from "../assets/logo/hola-md-final-logo.png";
 import whatsAppIcon from "../assets/logo/WhatsApp-Icon.png";
 import jsQR from "jsqr";
 import { activateClinicPolicy, cancelAppointment, checkInAppointment, checkInAppointmentByQrToken, collectAppointmentPayment, connectClinicWhatsApp, createClinicAppointment, createClinicDoctor, createClinicHoliday, createClinicPatient, createClinicPolicy, createClinicService, createClinicUser, createNextAppointment, deactivateClinicPolicy, deleteClinicAppointment, deleteClinicDoctor, deleteClinicHoliday, deleteClinicService, followUpAppointment, generateClinicQr, generatePatientQr, getAppointmentByQrToken, getAppointmentPayment, getClinicAppointments, getClinicAvailableSlots, getClinicDashboard, getClinicDoctors, getClinicHolidays, getClinicNotifications, getClinicPatients, getClinicPolicy, getClinicPolicies, getClinicPoliciesByCategory, getClinicPolicyVersions, getClinicProfiles, getClinicServices, getClinicUnreadNotificationCount, getClinicUsers, getClinicWeeklyAppointments, getClinicWorkingHours, getDoctorAvailability, getDoctorServices, getPatientAppointmentHistory, getUserClinics, markAllClinicNotificationsRead, markClinicNotificationRead, rescheduleAppointment, rollbackClinicPolicy, saveClinicProfile, saveClinicWhatsAppConfig, saveDoctorAvailability, searchClinicPatientsByQuery, updateAppointmentStatus, updateClinicDoctor, updateClinicPolicy, updateClinicProfile, updateClinicPatient, upsertClinicWorkingHours, validateClinicPolicy } from "../services/api";
@@ -117,7 +117,7 @@ function Modal({ title, children, onClose, onSave, cancelLabel = "Cancel", saveL
   );
 }
 
-function AppointmentPaymentDialog({ appointment, token, onClose, onPaymentCollected, showToast }) {
+function AppointmentPaymentDialog({ appointment, clinicId, token, onClose, onPaymentCollected, showToast }) {
   const [details, setDetails] = useState(null);
   const [amount, setAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("UPI");
@@ -132,7 +132,7 @@ function AppointmentPaymentDialog({ appointment, token, onClose, onPaymentCollec
       try {
         setLoading(true);
         setError("");
-        const result = await getAppointmentPayment(appointment.id, token);
+        const result = await getAppointmentPayment(appointment.id, token, clinicId);
         if (cancelled) return;
         const totalAmount = Number(result?.totalAmount) || 0;
         const isUnpaid = String(appointment.paymentStatus || "").toUpperCase() === "UNPAID";
@@ -150,7 +150,7 @@ function AppointmentPaymentDialog({ appointment, token, onClose, onPaymentCollec
 
     loadPayment();
     return () => { cancelled = true; };
-  }, [appointment.id, appointment.paymentStatus, token]);
+  }, [appointment.id, appointment.paymentStatus, clinicId, token]);
 
   async function collectPayment() {
     const paymentAmount = Number(amount);
@@ -163,7 +163,7 @@ function AppointmentPaymentDialog({ appointment, token, onClose, onPaymentCollec
     try {
       setSaving(true);
       setError("");
-      const result = await collectAppointmentPayment(appointment.id, { amount: paymentAmount, paymentMethod }, token);
+      const result = await collectAppointmentPayment(appointment.id, { amount: paymentAmount, paymentMethod }, token, clinicId);
       setDetails(result);
       setAmount(String(result?.remainingAmount ?? ""));
       onPaymentCollected?.(result);
@@ -666,6 +666,7 @@ export default function Dashboard({ theme, onToggleTheme }) {
           {page === "reception" && canUseReceptionDesk && (
             <ReceptionDesk
               clinicId={selectedClinicId}
+              clinicName={selectedClinicName}
               token={token}
               search={search}
               openModal={setModal}
@@ -1375,6 +1376,108 @@ function InfoLine({ left, right, positive }) {
   return <div className="info-line"><span>{left}</span><strong className={positive ? "up" : ""}>{right}</strong></div>;
 }
 
+function AppointmentOverviewContent({ appointment, paymentDetails, paymentLoading, paymentError, canScheduleFollowUp = false, onScheduleFollowUp }) {
+  const status = String(appointment.status || "").toUpperCase();
+  const statusClass = status === "IN_CONSULTATION" ? "in_progress" : status.toLowerCase();
+  const patientName = appointment.patientName || appointment.patient?.name || "Unknown patient";
+  const patientPhone = appointment.phoneNo || appointment.patientPhone || appointment.patient?.phoneNo || "-";
+  const appointmentDate = appointment.appointmentDate || appointment.date;
+  const startTime = appointment.startTime || appointment.time;
+  const paymentStatus = paymentDetails?.status || appointment.paymentStatus || "-";
+  const paidAt = paymentDetails?.paidAt || appointment.paidAt;
+  const amount = paymentDetails?.totalAmount ?? appointment.totalAmount ?? appointment.amount;
+  const paymentMethod = paymentDetails?.paymentMethod || appointment.paymentMethod;
+  const consultationStartedAt = appointment.inConsultationStartedAt || appointment.consultationStartedAt || appointment.inConsultationAt;
+  const consultationCompletedAt = appointment.completedAt || appointment.consultationCompletedAt || (status === "COMPLETED" && typeof appointment.completed !== "boolean" ? appointment.completed : null);
+  const consultationStartTime = consultationStartedAt ? new Date(consultationStartedAt).getTime() : NaN;
+  const consultationEndTime = consultationCompletedAt ? new Date(consultationCompletedAt).getTime() : NaN;
+  const consultationDurationMinutes = Number.isFinite(consultationStartTime) && Number.isFinite(consultationEndTime) && consultationEndTime >= consultationStartTime
+    ? Math.floor((consultationEndTime - consultationStartTime) / 60000)
+    : null;
+  const consultationDuration = consultationDurationMinutes === null
+    ? "-"
+    : consultationDurationMinutes < 1
+      ? "Less than 1 minute"
+      : [
+          Math.floor(consultationDurationMinutes / 60) ? `${Math.floor(consultationDurationMinutes / 60)} hr${Math.floor(consultationDurationMinutes / 60) === 1 ? "" : "s"}` : "",
+          consultationDurationMinutes % 60 ? `${consultationDurationMinutes % 60} min` : "",
+        ].filter(Boolean).join(" ");
+  const statusOrder = ["CONFIRMED", "CHECKED_IN", "WAITING", "IN_CONSULTATION", "COMPLETED"];
+  const currentStatusIndex = statusOrder.indexOf(status);
+  const cancelledAt = appointment.CancelledAt || appointment.cancelledAt || appointment.canceledAt || appointment.cancellationAt || appointment.cancellationDate;
+  const timelineSteps = [
+    { label: "Booked", time: appointment.createdAt || appointment.confirmedAt || appointment.bookedAt, done: true },
+    { label: "Confirmed", time: appointment.confirmedAt, done: currentStatusIndex >= 0 || Boolean(appointment.confirmedAt) },
+    { label: "Checked In", time: appointment.checkedInAt, done: currentStatusIndex >= 1 || Boolean(appointment.checkedInAt) },
+    { label: "Waiting", time: appointment.waitingAt, done: currentStatusIndex >= 2 || Boolean(appointment.waitingAt) },
+    { label: "In Consultation", time: consultationStartedAt, done: currentStatusIndex >= 3 || Boolean(consultationStartedAt) },
+    { label: "Completed", time: consultationCompletedAt, done: currentStatusIndex >= 4 || Boolean(consultationCompletedAt) },
+  ];
+  if (status === "CANCELLED") {
+    timelineSteps.push({ label: "Cancelled", time: cancelledAt, done: true, cancelled: true });
+  }
+  const formatDateTime = (value) => {
+    if (!value) return "";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  };
+  const formatAppointmentDate = (date, time) => {
+    if (!date) return "-";
+    const parsed = new Date(`${String(date).slice(0, 10)}T00:00:00`);
+    const dateLabel = Number.isNaN(parsed.getTime()) ? date : parsed.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+    return `${dateLabel}${time ? ` · ${formatTime(time)}` : ""}`;
+  };
+
+  return <div className="appointment-overview">
+    <div className="appointment-overview-summary">
+      <span className={`status ${statusClass}`}>{appointment.status || "-"}</span>
+      <div><small>Appointment ID</small><strong>#{appointment.id ?? appointment.appointmentId ?? "-"}</strong></div>
+      <div className="appointment-overview-date"><span aria-hidden="true">▦</span><div><small>Date &amp; Time</small><strong>{formatAppointmentDate(appointmentDate, startTime)}</strong></div></div>
+    </div>
+
+    <div className="appointment-overview-grid">
+      <section className="appointment-overview-section">
+        <h4><span aria-hidden="true">♙</span>Patient Information</h4>
+        <div className="appointment-patient-overview"><div className="appointment-overview-avatar">{initials({ firstName: patientName })}</div><div><strong>{patientName}</strong><span>{patientPhone}</span></div></div>
+      </section>
+      <section className="appointment-overview-section">
+        <h4><span aria-hidden="true">✚</span>Consultation Details</h4>
+        <div className="appointment-overview-detail"><span>Doctor</span><strong>{appointment.doctorName || appointment.doctor?.name || "-"}</strong></div>
+        <div className="appointment-overview-detail"><span>Service</span><strong>{appointment.serviceName || appointment.service?.name || "-"}</strong></div>
+        <div className="appointment-overview-detail"><span>Source</span><strong>{appointment.source || appointment.bookingSource || "-"}</strong></div>
+      </section>
+      <section className="appointment-overview-section">
+        <div className="appointment-overview-section-heading"><h4><span aria-hidden="true">▤</span>Payment Information</h4><span className={`status ${String(paymentStatus).toLowerCase()}`}>{paymentStatus}</span></div>
+        {paymentLoading && <p className="muted">Loading payment...</p>}
+        {paymentError && <p className="muted">{paymentError}</p>}
+        <div className="appointment-overview-detail"><span>Amount</span><strong>{amount == null ? "-" : formatCurrency(amount)}</strong></div>
+        <div className="appointment-overview-detail"><span>Payment Method</span><strong>{paymentMethod || "-"}</strong></div>
+        <div className="appointment-overview-detail"><span>Payment Status</span><strong>{paidAt ? `Paid on ${formatDateTime(paidAt)}` : paymentStatus}</strong></div>
+      </section>
+      <section className="appointment-overview-section">
+        <h4><span aria-hidden="true">▦</span>Follow-up</h4>
+        <div className="appointment-overview-detail"><span>Suggested Follow-up</span><strong>{appointment.suggestedFollowUpDate || "-"}</strong></div>
+        {canScheduleFollowUp && onScheduleFollowUp && <button className="btn btn-outline appointment-follow-up-button" onClick={onScheduleFollowUp}>＋ Create follow-up appointment</button>}
+      </section>
+      <section className="appointment-overview-section">
+        <h4><span aria-hidden="true">☷</span>Queue Information</h4>
+        <div className="appointment-overview-detail"><span>Queue Number</span><strong>{appointment.queueNumber ?? appointment.queueCode ?? appointment.queueToken ?? "-"}</strong></div>
+        <div className="appointment-overview-detail"><span>Queue Token</span><strong>{appointment.queueToken || "-"}</strong></div>
+        <div className="appointment-overview-detail"><span>Queue Status</span><strong>{appointment.status || "-"}</strong></div>
+        {/* <div className="appointment-overview-detail"><span>Checked In At</span><strong>{formatDateTime(appointment.checkInTime || appointment.checkedInAt) || "-"}</strong></div>
+        <div className="appointment-overview-detail"><span>Consultation Started At</span><strong>{formatDateTime(consultationStartedAt) || "-"}</strong></div>
+        <div className="appointment-overview-detail"><span>Consultation Completed At</span><strong>{formatDateTime(consultationCompletedAt) || "-"}</strong></div> */}
+        <div className="appointment-overview-detail"><span>Time Taken in Consultation</span><strong>{consultationDuration}</strong></div>
+      </section>
+    </div>
+
+    <section className="appointment-overview-section appointment-timeline">
+      <h4><span aria-hidden="true">◷</span>Appointment Timeline</h4>
+      <div className={`appointment-timeline-steps ${status === "CANCELLED" ? "cancelled" : ""}`}>{timelineSteps.map((step) => <div className={`appointment-timeline-step ${step.done ? "done" : ""} ${step.cancelled ? "cancelled" : ""}`} key={step.label}><span className="appointment-timeline-marker">{step.cancelled ? "×" : step.done ? "✓" : ""}</span><strong>{step.label}</strong><small>{formatDateTime(step.time) || ""}</small></div>)}</div>
+    </section>
+  </div>;
+}
+
 function Appointments({ clinicId, token, userRole, userDoctorId, search, openModal, showToast }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -1576,7 +1679,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
       try {
         setAppointmentPaymentLoading(true);
         setAppointmentPaymentError("");
-        const result = await getAppointmentPayment(appointmentDetails.id, token);
+        const result = await getAppointmentPayment(appointmentDetails.id, token, clinicId);
         if (!cancelled) setAppointmentPaymentDetails(result);
       } catch (err) {
         if (!cancelled) setAppointmentPaymentError(err.message || "Unable to load payment information.");
@@ -1587,7 +1690,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
 
     loadAppointmentPaymentDetails();
     return () => { cancelled = true; };
-  }, [appointmentDetails?.id, token]);
+  }, [appointmentDetails?.id, clinicId, token]);
 
   function closeAppointmentDetails() {
     setAppointmentDetails(null);
@@ -1656,7 +1759,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
     try {
       setCancelingAppointmentId(appointmentId);
       setCancelError("");
-      const updatedAppointment = await cancelAppointment(appointmentId, token);
+      const updatedAppointment = await cancelAppointment(appointmentId, token, clinicId);
       setRows((items) => items.map((appointment) => appointment.id === appointmentId
         ? { ...appointment, ...(updatedAppointment || {}), status: updatedAppointment?.status || "CANCELLED" }
         : appointment));
@@ -1736,7 +1839,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
           startTime: scheduleModal.startTime,
           endTime: scheduleModal.endTime,
           reason: scheduleModal.reason || "Patient requested a different time",
-        }, token);
+        }, token, clinicId);
         setRows((items) => items.map((item) => item.id === appointmentId
           ? { ...item, ...(updatedAppointment || {}), appointmentDate: updatedAppointment?.appointmentDate || scheduleModal.appointmentDate, startTime: updatedAppointment?.startTime || scheduleModal.startTime, endTime: updatedAppointment?.endTime || scheduleModal.endTime }
           : item));
@@ -1754,6 +1857,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   const canCancelAppointment = (appointment) => String(appointment.status || "").toUpperCase() !== "CANCELLED";
   const canMarkNoShow = (appointment) => String(appointment.status || "").toUpperCase() === "CHECKED_IN";
   const canCreateNextAppointment = (appointment) => String(appointment.status || "").toUpperCase() === "COMPLETED" && !appointment.followUpAppointmentId;
+  const canScheduleSuggestedFollowUp = (appointment) => canCreateNextAppointment(appointment) && Boolean(appointment.suggestedFollowUpDate);
 
   return <>
   <section className="page active"><div className="card">
@@ -1822,81 +1926,14 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   >
     {appointmentDetailsLoading && <p className="muted">Loading appointment details...</p>}
     {appointmentDetailsError && <div className="auth-error">{appointmentDetailsError}</div>}
-    {appointmentDetails && <>
-      {(() => {
-        const status = String(appointmentDetails.status || "").toUpperCase();
-        const statusClass = status === "IN_CONSULTATION" ? "in_progress" : status.toLowerCase();
-        const patientName = appointmentDetails.patientName || appointmentDetails.patient?.name || "Unknown patient";
-        const patientPhone = appointmentDetails.phoneNo || appointmentDetails.patientPhone || appointmentDetails.patient?.phoneNo || "-";
-        const appointmentDate = appointmentDetails.appointmentDate || appointmentDetails.date;
-        const startTime = appointmentDetails.startTime || appointmentDetails.time;
-        const paymentStatus = appointmentPaymentDetails?.status || appointmentDetails.paymentStatus || "-";
-        const paidAt = appointmentPaymentDetails?.paidAt || appointmentDetails.paidAt;
-        const amount = appointmentPaymentDetails?.totalAmount ?? appointmentDetails.totalAmount ?? appointmentDetails.amount;
-        const paymentMethod = appointmentPaymentDetails?.paymentMethod || appointmentDetails.paymentMethod;
-        const statusOrder = ["CONFIRMED", "CHECKED_IN", "WAITING", "IN_CONSULTATION", "COMPLETED"];
-        const currentStatusIndex = statusOrder.indexOf(status);
-        const timelineSteps = [
-          { label: "Booked", time: appointmentDetails.createdAt || appointmentDetails.bookedAt, done: true },
-          { label: "Confirmed", time: appointmentDetails.confirmedAt, done: currentStatusIndex >= 0 },
-          { label: "Checked In", time: appointmentDetails.checkedInAt, done: currentStatusIndex >= 1 },
-          { label: "Waiting", time: appointmentDetails.waitingAt, done: currentStatusIndex >= 2 },
-          { label: "In Consultation", time: appointmentDetails.consultationStartedAt || appointmentDetails.inConsultationAt, done: currentStatusIndex >= 3 },
-          { label: "Completed", time: appointmentDetails.completedAt, done: currentStatusIndex >= 4 },
-        ];
-        const formatDateTime = (value) => {
-          if (!value) return "";
-          const date = new Date(value);
-          return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-        };
-        const formatAppointmentDate = (date, time) => {
-          if (!date) return "-";
-          const parsed = new Date(`${String(date).slice(0, 10)}T00:00:00`);
-          const dateLabel = Number.isNaN(parsed.getTime()) ? date : parsed.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
-          return `${dateLabel}${time ? ` · ${formatTime(time)}` : ""}`;
-        };
-        const canScheduleFollowUp = canCreateNextAppointment(appointmentDetails);
-
-        return <div className="appointment-overview">
-          <div className="appointment-overview-summary">
-            <span className={`status ${statusClass}`}>{appointmentDetails.status || "-"}</span>
-            <div><small>Appointment ID</small><strong>#{appointmentDetails.id ?? appointmentDetails.appointmentId ?? "-"}</strong></div>
-            <div className="appointment-overview-date"><span aria-hidden="true">▦</span><div><small>Date &amp; Time</small><strong>{formatAppointmentDate(appointmentDate, startTime)}</strong></div></div>
-          </div>
-
-          <div className="appointment-overview-grid">
-            <section className="appointment-overview-section">
-              <h4><span aria-hidden="true">♙</span>Patient Information</h4>
-              <div className="appointment-patient-overview"><div className="appointment-overview-avatar">{initials({ firstName: patientName })}</div><div><strong>{patientName}</strong><span>{patientPhone}</span></div></div>
-            </section>
-            <section className="appointment-overview-section">
-              <h4><span aria-hidden="true">✚</span>Consultation Details</h4>
-              <div className="appointment-overview-detail"><span>Doctor</span><strong>{appointmentDetails.doctorName || appointmentDetails.doctor?.name || "-"}</strong></div>
-              <div className="appointment-overview-detail"><span>Service</span><strong>{appointmentDetails.serviceName || appointmentDetails.service?.name || "-"}</strong></div>
-              <div className="appointment-overview-detail"><span>Source</span><strong>{appointmentDetails.source || appointmentDetails.bookingSource || "-"}</strong></div>
-            </section>
-            <section className="appointment-overview-section">
-              <div className="appointment-overview-section-heading"><h4><span aria-hidden="true">▤</span>Payment Information</h4><span className={`status ${String(paymentStatus).toLowerCase()}`}>{paymentStatus}</span></div>
-              {appointmentPaymentLoading && <p className="muted">Loading payment...</p>}
-              {appointmentPaymentError && <p className="muted">{appointmentPaymentError}</p>}
-              <div className="appointment-overview-detail"><span>Amount</span><strong>{amount == null ? "-" : formatCurrency(amount)}</strong></div>
-              <div className="appointment-overview-detail"><span>Payment Method</span><strong>{paymentMethod || "-"}</strong></div>
-              <div className="appointment-overview-detail"><span>Payment Status</span><strong>{paidAt ? `Paid on ${formatDateTime(paidAt)}` : paymentStatus}</strong></div>
-            </section>
-            <section className="appointment-overview-section">
-              <h4><span aria-hidden="true">▦</span>Follow-up</h4>
-              <div className="appointment-overview-detail"><span>Suggested Follow-up</span><strong>{appointmentDetails.suggestedFollowUpDate || "-"}</strong></div>
-              {canScheduleFollowUp && <button className="btn btn-outline appointment-follow-up-button" onClick={scheduleAppointmentFollowUp}>＋ Schedule follow-up</button>}
-            </section>
-          </div>
-
-          <section className="appointment-overview-section appointment-timeline">
-            <h4><span aria-hidden="true">◷</span>Appointment Timeline</h4>
-            <div className="appointment-timeline-steps">{timelineSteps.map((step) => <div className={`appointment-timeline-step ${step.done ? "done" : ""}`} key={step.label}><span className="appointment-timeline-marker">{step.done ? "✓" : ""}</span><strong>{step.label}</strong><small>{formatDateTime(step.time) || ""}</small></div>)}</div>
-          </section>
-        </div>;
-      })()}
-    </>}
+    {appointmentDetails && <AppointmentOverviewContent
+      appointment={appointmentDetails}
+      paymentDetails={appointmentPaymentDetails}
+      paymentLoading={appointmentPaymentLoading}
+      paymentError={appointmentPaymentError}
+      canScheduleFollowUp={canScheduleSuggestedFollowUp(appointmentDetails)}
+      onScheduleFollowUp={scheduleAppointmentFollowUp}
+    />}
   </Modal>}
   {cancelConfirmationId && <Modal
     title="Cancel Appointment"
@@ -1953,6 +1990,7 @@ function Appointments({ clinicId, token, userRole, userDoctorId, search, openMod
   </Modal>}
   {paymentAppointment && <AppointmentPaymentDialog
     appointment={paymentAppointment}
+    clinicId={clinicId}
     token={token}
     onClose={() => setPaymentAppointment(null)}
     onPaymentCollected={handlePaymentCollected}
@@ -1977,6 +2015,7 @@ function Patients({ openModal, onEdit, showToast, clinicId, clinicName, token })
   const [historyError, setHistoryError] = useState("");
   const [qrPatient, setQrPatient] = useState(null);
   const [qrImageUrl, setQrImageUrl] = useState("");
+  const [qrTemplateBlob, setQrTemplateBlob] = useState(null);
   const [qrLoading, setQrLoading] = useState(false);
   const [qrError, setQrError] = useState("");
 
@@ -2081,6 +2120,22 @@ function Patients({ openModal, onEdit, showToast, clinicId, clinicName, token })
     };
   }, [clinicId, qrPatient, token]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setQrTemplateBlob(null);
+    if (!qrImageUrl || !qrPatient) return () => { cancelled = true; };
+
+    createPatientQrTemplateBlob()
+      .then((blob) => {
+        if (!cancelled) setQrTemplateBlob(blob);
+      })
+      .catch((err) => {
+        if (!cancelled) setQrError(err.message || "Unable to prepare the patient QR template.");
+      });
+
+    return () => { cancelled = true; };
+  }, [qrImageUrl, qrPatient, patientQrClinicName, patientQrDisplayId]);
+
   const filteredPatients = patients.filter((patient) => {
     const query = searchTerm.trim().toLowerCase();
     return !query || patient.name?.toLowerCase().includes(query) || patient.phoneNo?.toLowerCase().includes(query);
@@ -2095,6 +2150,235 @@ function Patients({ openModal, onEdit, showToast, clinicId, clinicName, token })
   function handlePageSizeChange(nextSize) {
     setPage(0);
     setPageSize(Number(nextSize) || 5);
+  }
+
+  async function createPatientQrTemplateBlob() {
+    if (!qrImageUrl || !qrPatient) throw new Error("Wait for the patient QR code to finish loading.");
+
+    const qrImage = await new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Unable to load the patient QR image."));
+      image.src = qrImageUrl;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = 1000;
+    canvas.height = 960;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Unable to create the patient QR template.");
+
+    const roundedRect = (x, y, width, height, radius, fill, stroke, lineWidth = 1) => {
+      context.beginPath();
+      context.roundRect(x, y, width, height, radius);
+      if (fill) {
+        context.fillStyle = fill;
+        context.fill();
+      }
+      if (stroke) {
+        context.lineWidth = lineWidth;
+        context.strokeStyle = stroke;
+        context.stroke();
+      }
+    };
+    const drawClinicIcon = () => {
+      context.save();
+      context.strokeStyle = "#376c53";
+      context.lineWidth = 9;
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      context.beginPath();
+      context.moveTo(586, 166);
+      context.lineTo(586, 112);
+      context.lineTo(633, 88);
+      context.lineTo(633, 166);
+      context.moveTo(633, 166);
+      context.lineTo(633, 106);
+      context.lineTo(680, 83);
+      context.lineTo(680, 166);
+      context.moveTo(576, 166);
+      context.lineTo(696, 166);
+      context.stroke();
+      context.lineWidth = 5;
+      [[602, 127], [619, 127], [602, 145], [619, 145], [648, 119], [666, 119], [648, 140], [666, 140]].forEach(([x, y]) => {
+        context.beginPath();
+        context.moveTo(x, y);
+        context.lineTo(x + 5, y);
+        context.stroke();
+      });
+      context.restore();
+    };
+
+    const background = context.createLinearGradient(0, 0, 0, canvas.height);
+    background.addColorStop(0, "#edf5f0");
+    background.addColorStop(1, "#e7efeb");
+    roundedRect(8, 8, 984, 944, 48, background, "#2b4f42", 8);
+
+    roundedRect(32, 32, 936, 170, 42, "#e6f1eb");
+    context.fillStyle = "#c8e2d4";
+    context.beginPath();
+    context.arc(112, 116, 52, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = "#245b43";
+    context.beginPath();
+    context.arc(112, 99, 17, 0, Math.PI * 2);
+    context.fill();
+    context.beginPath();
+    context.moveTo(80, 150);
+    context.lineTo(80, 137);
+    context.quadraticCurveTo(80, 120, 98, 120);
+    context.lineTo(126, 120);
+    context.quadraticCurveTo(144, 120, 144, 137);
+    context.lineTo(144, 150);
+    context.closePath();
+    context.fill();
+
+    context.fillStyle = "#58716e";
+    context.font = "700 18px Arial, sans-serif";
+    context.letterSpacing = "3px";
+    context.fillText("PATIENT", 184, 72);
+    context.letterSpacing = "0px";
+    const patientName = String(qrPatient.name || "Patient");
+    let nameSize = 44;
+    context.font = `700 ${nameSize}px Arial, sans-serif`;
+    while (context.measureText(patientName).width > 360 && nameSize > 28) {
+      nameSize -= 1;
+      context.font = `700 ${nameSize}px Arial, sans-serif`;
+    }
+    context.fillStyle = "#1e433b";
+    context.fillText(patientName, 184, 121);
+    context.fillStyle = "#334b44";
+    context.font = "700 22px Arial, sans-serif";
+    context.fillText(`ID: ${patientQrDisplayId}`, 184, 158);
+
+    context.strokeStyle = "rgba(35,68,60,.22)";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(568, 72);
+    context.lineTo(568, 163);
+    context.stroke();
+    drawClinicIcon();
+    context.fillStyle = "#1e433b";
+    const clinicName = String(patientQrClinicName || "Clinic");
+    let clinicNameSize = 24;
+    context.font = `700 ${clinicNameSize}px Arial, sans-serif`;
+    while (context.measureText(clinicName).width > 238 && clinicNameSize > 16) {
+      clinicNameSize -= 1;
+      context.font = `700 ${clinicNameSize}px Arial, sans-serif`;
+    }
+    context.fillText(clinicName, 712, 137);
+
+    roundedRect(220, 224, 560, 560, 42, "#edf7f4", "rgba(36,78,67,.9)", 8);
+    roundedRect(244, 248, 512, 512, 28, "#ffffff");
+    context.drawImage(qrImage, 270, 274, 460, 460);
+
+    const footerGradient = context.createLinearGradient(0, 804, 0, 944);
+    footerGradient.addColorStop(0, "#b2d0c5");
+    footerGradient.addColorStop(1, "#7ea996");
+    roundedRect(10, 804, 980, 144, 0, footerGradient);
+    roundedRect(54, 838, 78, 78, 20, "rgba(255,255,255,.3)", "rgba(21,57,49,.15)", 2);
+    context.fillStyle = "#376c53";
+    roundedRect(76, 853, 34, 48, 6, "#376c53");
+    roundedRect(80, 859, 26, 34, 2, "#dbe8e0");
+    context.fillStyle = "#245b43";
+    context.beginPath();
+    context.arc(93, 897, 2, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = "#12342f";
+    context.font = "700 34px Arial, sans-serif";
+    context.fillText("Scan this QR code", 162, 873);
+    context.fillStyle = "#1d3a35";
+    context.font = "21px Arial, sans-serif";
+    context.fillText("to book your appointments and more.", 162, 909);
+
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("Unable to create the patient QR template."));
+      }, "image/png");
+    });
+  }
+
+  async function handlePatientQrPrint() {
+    if (!qrImageUrl || qrLoading) {
+      setQrError("Wait for the patient QR code to finish loading before printing.");
+      return;
+    }
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      setQrError("Allow pop-ups to print the patient QR code.");
+      return;
+    }
+
+    try {
+      const templateBlob = await createPatientQrTemplateBlob();
+      const imageUrl = URL.createObjectURL(templateBlob);
+      printWindow.document.title = `${qrPatient.name || "Patient"} QR Code`;
+      printWindow.document.body.innerHTML = "";
+      printWindow.document.body.style.cssText = "margin:0;padding:16px;display:grid;place-items:center;background:#fff";
+      const style = printWindow.document.createElement("style");
+      style.textContent = "@page{margin:10mm}img{display:block;width:min(100%,180mm);height:auto;print-color-adjust:exact;-webkit-print-color-adjust:exact}@media print{body{padding:0!important}}";
+      const image = printWindow.document.createElement("img");
+      image.alt = `Patient QR template for ${qrPatient.name || "patient"}`;
+      image.onload = () => {
+        printWindow.focus();
+        printWindow.print();
+        URL.revokeObjectURL(imageUrl);
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(imageUrl);
+        printWindow.close();
+        setQrError("Unable to load the patient QR template for printing.");
+      };
+      printWindow.document.head.appendChild(style);
+      printWindow.document.body.appendChild(image);
+      image.src = imageUrl;
+    } catch (err) {
+      printWindow.close();
+      setQrError(err.message || "Unable to create the patient QR template for printing.");
+    }
+  }
+
+  async function handlePatientQrShare() {
+    if (!qrTemplateBlob) {
+      setQrError("Wait for the patient QR template to finish preparing.");
+      return;
+    }
+
+    try {
+      const fileName = `patient-${qrPatient.id}-qr-template.png`;
+      const downloadUrl = URL.createObjectURL(qrTemplateBlob);
+      try {
+        if (typeof File !== "undefined" && navigator.share) {
+          const file = new File([qrTemplateBlob], fileName, { type: "image/png" });
+          if (navigator.canShare?.({ files: [file] })) {
+            await navigator.share({
+              files: [file],
+              title: `${qrPatient.name || "Patient"} QR Code`,
+              text: `Patient QR code for ${qrPatient.name || "patient"} at ${patientQrClinicName}.`,
+            });
+            return;
+          }
+        }
+
+        if (navigator.clipboard?.write && window.ClipboardItem) {
+          await navigator.clipboard.write([new ClipboardItem({ "image/png": qrTemplateBlob })]);
+          showToast("Patient QR template copied. Paste it into a message to share.");
+          return;
+        }
+
+        const downloadLink = document.createElement("a");
+        downloadLink.href = downloadUrl;
+        downloadLink.download = fileName;
+        downloadLink.click();
+        showToast("Patient QR template downloaded so you can share it.");
+      } finally {
+        URL.revokeObjectURL(downloadUrl);
+      }
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        setQrError(err.message || "Unable to share the patient QR template.");
+      }
+    }
   }
 
   return <>
@@ -2173,12 +2457,16 @@ function Patients({ openModal, onEdit, showToast, clinicId, clinicName, token })
           <span>to book your appointments and more.</span>
         </div>
       </div>
+      {qrImageUrl && <div className="patient-qr-actions">
+        <button type="button" className="btn btn-outline" onClick={handlePatientQrPrint} disabled={qrLoading}>Print</button>
+        <button type="button" className="btn btn-primary" onClick={handlePatientQrShare} disabled={qrLoading || !qrTemplateBlob}>Share</button>
+      </div>}
     </div>
   </div>}
   </>;
 }
 
-function ReceptionDesk({ clinicId, token, search, openModal, showToast, onUpdatePatient }) {
+function ReceptionDesk({ clinicId, clinicName, token, search, openModal, showToast, onUpdatePatient }) {
   const [selectedDate, setSelectedDate] = useState(() => {
     const date = new Date();
     date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
@@ -2196,6 +2484,17 @@ function ReceptionDesk({ clinicId, token, search, openModal, showToast, onUpdate
   const [updatingAppointmentId, setUpdatingAppointmentId] = useState(null);
   const [paymentAppointment, setPaymentAppointment] = useState(null);
   const [viewingAppointment, setViewingAppointment] = useState(null);
+  const [viewingAppointmentDetails, setViewingAppointmentDetails] = useState(null);
+  const [viewingAppointmentLoading, setViewingAppointmentLoading] = useState(false);
+  const [viewingAppointmentError, setViewingAppointmentError] = useState("");
+  const [viewingPaymentDetails, setViewingPaymentDetails] = useState(null);
+  const [viewingPaymentLoading, setViewingPaymentLoading] = useState(false);
+  const [viewingPaymentError, setViewingPaymentError] = useState("");
+  const [followUpSchedule, setFollowUpSchedule] = useState(null);
+  const [followUpSlots, setFollowUpSlots] = useState([]);
+  const [followUpSlotsLoading, setFollowUpSlotsLoading] = useState(false);
+  const [followUpScheduleError, setFollowUpScheduleError] = useState("");
+  const [creatingFollowUpAppointment, setCreatingFollowUpAppointment] = useState(false);
   const [qrScanOpen, setQrScanOpen] = useState(false);
   const [qrScanValue, setQrScanValue] = useState("");
   const [qrAppointment, setQrAppointment] = useState(null);
@@ -2206,6 +2505,93 @@ function ReceptionDesk({ clinicId, token, search, openModal, showToast, onUpdate
   const [qrCameraActive, setQrCameraActive] = useState(false);
   const qrScanInputRef = useRef(null);
   const qrVideoRef = useRef(null);
+
+  useEffect(() => {
+    if (!viewingAppointment || !clinicId || !token) {
+      setViewingAppointmentDetails(null);
+      setViewingAppointmentLoading(false);
+      setViewingAppointmentError("");
+      return undefined;
+    }
+
+    let cancelled = false;
+    setViewingAppointmentDetails(viewingAppointment);
+    setViewingAppointmentLoading(true);
+    setViewingAppointmentError("");
+
+    async function loadViewingAppointment() {
+      try {
+        const result = await getClinicAppointments(clinicId, { appointmentId: viewingAppointment.id }, token);
+        const details = Array.isArray(result) ? result[0] : result?.items?.[0] || result;
+        if (!details) throw new Error("Appointment details were not returned.");
+        if (!cancelled) setViewingAppointmentDetails(details);
+      } catch (err) {
+        if (!cancelled) setViewingAppointmentError(err.message || "Unable to load appointment details.");
+      } finally {
+        if (!cancelled) setViewingAppointmentLoading(false);
+      }
+    }
+
+    loadViewingAppointment();
+    return () => { cancelled = true; };
+  }, [viewingAppointment?.id, clinicId, token]);
+
+  useEffect(() => {
+    if (!viewingAppointmentDetails?.id || !token) {
+      setViewingPaymentDetails(null);
+      setViewingPaymentLoading(false);
+      setViewingPaymentError("");
+      return undefined;
+    }
+
+    let cancelled = false;
+    async function loadViewingPayment() {
+      try {
+        setViewingPaymentLoading(true);
+        setViewingPaymentError("");
+        const details = await getAppointmentPayment(viewingAppointmentDetails.id, token, clinicId);
+        if (!cancelled) setViewingPaymentDetails(details);
+      } catch (err) {
+        if (!cancelled) setViewingPaymentError(err.message || "Unable to load payment information.");
+      } finally {
+        if (!cancelled) setViewingPaymentLoading(false);
+      }
+    }
+
+    loadViewingPayment();
+    return () => { cancelled = true; };
+  }, [viewingAppointmentDetails?.id, clinicId, token]);
+
+  useEffect(() => {
+    const appointment = followUpSchedule?.appointment;
+    const doctorId = appointment?.doctorId ?? appointment?.doctor?.id;
+    const serviceId = appointment?.serviceId ?? appointment?.service?.id;
+    if (!followUpSchedule || !token || !clinicId || !doctorId || !serviceId || !followUpSchedule.appointmentDate) {
+      setFollowUpSlots([]);
+      setFollowUpSlotsLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    async function loadFollowUpSlots() {
+      try {
+        setFollowUpSlotsLoading(true);
+        setFollowUpScheduleError("");
+        const slots = await getClinicAvailableSlots(clinicId, doctorId, serviceId, followUpSchedule.appointmentDate, token);
+        if (!cancelled) setFollowUpSlots(slots);
+      } catch (err) {
+        if (!cancelled) {
+          setFollowUpSlots([]);
+          setFollowUpScheduleError(err.message || "Unable to load available slots.");
+        }
+      } finally {
+        if (!cancelled) setFollowUpSlotsLoading(false);
+      }
+    }
+
+    loadFollowUpSlots();
+    return () => { cancelled = true; };
+  }, [followUpSchedule, clinicId, token]);
 
   useEffect(() => {
     if (qrScanOpen && !qrAppointment) qrScanInputRef.current?.focus();
@@ -2520,8 +2906,8 @@ function ReceptionDesk({ clinicId, token, search, openModal, showToast, onUpdate
       setUpdatingAppointmentId(appointment.id);
       setError("");
       const updated = nextStatus === "CHECKED_IN"
-        ? await checkInAppointment(appointment.id, token)
-        : await updateAppointmentStatus(appointment.id, nextStatus, token);
+        ? await checkInAppointment(appointment.id, token, clinicId)
+        : await updateAppointmentStatus(appointment.id, nextStatus, token, clinicId);
       setAppointments((items) => items.map((item) => String(item.id) === String(appointment.id)
         ? { ...item, ...(updated || {}), status: updated?.status || nextStatus }
         : item));
@@ -2540,6 +2926,65 @@ function ReceptionDesk({ clinicId, token, search, openModal, showToast, onUpdate
     if (status === "CHECKED_IN") return { label: "Add to Queue", nextStatus: "WAITING" };
     if (status === "WAITING") return { label: "Start Consultation", nextStatus: "IN_CONSULTATION" };
     return null;
+  }
+
+  function scheduleReceptionFollowUp() {
+    const appointment = viewingAppointmentDetails;
+    if (!appointment?.id || !appointment.suggestedFollowUpDate || appointment.followUpAppointmentId) return;
+    if (!(appointment.doctorId ?? appointment.doctor?.id) || !(appointment.serviceId ?? appointment.service?.id)) {
+      setViewingAppointmentError("Doctor or service information is missing, so a follow-up appointment cannot be scheduled.");
+      return;
+    }
+    setFollowUpScheduleError("");
+    setFollowUpSlots([]);
+    setViewingAppointment(null);
+    setFollowUpSchedule({
+      appointment,
+      appointmentDate: appointment.suggestedFollowUpDate,
+      startTime: "",
+      endTime: "",
+    });
+  }
+
+  async function saveReceptionFollowUp() {
+    if (!followUpSchedule?.startTime || !followUpSchedule.endTime) {
+      setFollowUpScheduleError("Please select an available slot.");
+      return;
+    }
+
+    const appointment = followUpSchedule.appointment;
+    try {
+      setCreatingFollowUpAppointment(true);
+      setFollowUpScheduleError("");
+      const nextAppointment = await createNextAppointment(clinicId, appointment.id, {
+        appointmentDate: followUpSchedule.appointmentDate,
+        startTime: followUpSchedule.startTime,
+        endTime: followUpSchedule.endTime,
+      }, token);
+      setAppointments((items) => items.map((item) => String(item.id) === String(appointment.id)
+        ? { ...item, followUpAppointmentId: nextAppointment?.id || item.followUpAppointmentId || "CREATED" }
+        : item));
+      setFollowUpSchedule(null);
+      setRefreshKey((key) => key + 1);
+      showToast("Follow-up appointment created");
+    } catch (err) {
+      setFollowUpScheduleError(err.message || "Unable to create the follow-up appointment.");
+    } finally {
+      setCreatingFollowUpAppointment(false);
+    }
+  }
+
+  function getReceptionWhatsAppUrl(appointment) {
+    const phone = String(appointment.phoneNo || appointment.patientPhone || appointment.patient?.phoneNo || "").replace(/\D/g, "");
+    if (phone.length < 8 || phone.length > 15) return "";
+
+    const patientName = appointment.patientName || appointment.patient?.name || "there";
+    const clinic = clinicName || "the clinic";
+    const appointmentTime = formatTime(appointment.startTime || appointment.time);
+    const message = appointment.status === "CHECKED_IN"
+      ? `Hello ${patientName}, this is ${clinic} reception. We noticed you checked in for your appointment at ${appointmentTime}, but have not yet joined the consultation. Are you still at the clinic? Please reply if you need any help.`
+      : `Hello ${patientName}, this is ${clinic} reception regarding your appointment at ${appointmentTime}. Please reply if you need any assistance.`;
+    return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
   }
 
   function handleReceptionPaymentCollected(payment) {
@@ -2586,10 +3031,11 @@ function ReceptionDesk({ clinicId, token, search, openModal, showToast, onUpdate
               const canCollect = appointment.status === "COMPLETED" && ["UNPAID", "PARTIAL"].includes(paymentStatus);
               const paymentDue = appointment.remainingAmount ?? appointment.amountDue;
               const isUpdating = String(updatingAppointmentId) === String(appointment.id);
+              const whatsappUrl = getReceptionWhatsAppUrl(appointment);
               return <tr key={appointment.id}>
                 <td>{index + 1}</td>
                 <td>{formatTime(appointment.startTime || appointment.time)}</td>
-                <td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "Unknown patient"}</strong><span>{appointment.phoneNo || appointment.patientPhone || "-"}</span></div></div></td>
+                <td><div className="patient-cell"><div className="small-avatar">{initials({ firstName: appointment.patientName })}</div><div><strong>{appointment.patientName || "Unknown patient"}</strong><span className="reception-contact-line"><span>{appointment.phoneNo || appointment.patientPhone || appointment.patient?.phoneNo || "-"}</span>{whatsappUrl && <a className="reception-whatsapp-link" href={whatsappUrl} target="_blank" rel="noopener noreferrer" title="Message this patient on WhatsApp" aria-label={`Message ${appointment.patientName || "patient"} on WhatsApp`}><img src={whatsAppIcon} alt="" /></a>}</span></div></div></td>
                 <td>{appointment.id ?? "-"}</td>
                 <td>{appointment.doctorName || appointment.doctor?.name || appointment.doctor?.fullName || "-"}</td>
                 <td><span className={`reception-checkin ${appointment.status === "CHECKED_IN" || ["WAITING", "IN_CONSULTATION", "COMPLETED"].includes(appointment.status) ? "checked" : ""}`}>{["CHECKED_IN", "WAITING", "IN_CONSULTATION", "COMPLETED"].includes(appointment.status) ? "Checked In" : "Not Arrived"}</span>{appointment.checkInTime && <small>{formatTime(appointment.checkInTime)}</small>}</td>
@@ -2727,23 +3173,51 @@ function ReceptionDesk({ clinicId, token, search, openModal, showToast, onUpdate
       onClose={() => setViewingAppointment(null)}
       onSave={() => setViewingAppointment(null)}
       saveLabel="Close"
+      saveDisabled={viewingAppointmentLoading}
     >
-      <div className="appointment-overview">
-        <div className="appointment-overview-summary">
-          <span className={`status ${viewingAppointment.status === "IN_CONSULTATION" ? "in_progress" : String(viewingAppointment.status || "").toLowerCase()}`}>{viewingAppointment.status || "-"}</span>
-          <div><small>Appointment ID</small><strong>#{viewingAppointment.id ?? "-"}</strong></div>
-          <div className="appointment-overview-date"><span aria-hidden="true">▦</span><div><small>Date &amp; Time</small><strong>{viewingAppointment.appointmentDate || selectedDate} · {formatTime(viewingAppointment.startTime || viewingAppointment.time)}</strong></div></div>
+      {viewingAppointmentLoading && <p className="muted">Loading appointment details...</p>}
+      {viewingAppointmentError && <div className="auth-error">{viewingAppointmentError}</div>}
+      {viewingAppointmentDetails && <AppointmentOverviewContent
+        appointment={viewingAppointmentDetails}
+        paymentDetails={viewingPaymentDetails}
+        paymentLoading={viewingPaymentLoading}
+        paymentError={viewingPaymentError}
+        canScheduleFollowUp={String(viewingAppointmentDetails.status || "").toUpperCase() === "COMPLETED" && Boolean(viewingAppointmentDetails.suggestedFollowUpDate) && !viewingAppointmentDetails.followUpAppointmentId}
+        onScheduleFollowUp={scheduleReceptionFollowUp}
+      />}
+    </Modal>}
+    {followUpSchedule && <Modal
+      title="Create Follow-up Appointment"
+      onClose={() => setFollowUpSchedule(null)}
+      onSave={saveReceptionFollowUp}
+      saveLabel={creatingFollowUpAppointment ? "Creating..." : "Create Appointment"}
+      saveDisabled={followUpSlotsLoading || creatingFollowUpAppointment || !followUpSchedule.startTime}
+    >
+      <div className="form-grid">
+        <Field label="Patient" value={followUpSchedule.appointment.patientName || followUpSchedule.appointment.patient?.name || "-"} disabled />
+        <Field label="Date *" type="date" value={followUpSchedule.appointmentDate} onChange={(event) => setFollowUpSchedule((current) => ({ ...current, appointmentDate: event.target.value, startTime: "", endTime: "" }))} />
+        <div className="field">
+          <label>Available Slot *</label>
+          <select
+            value={followUpSchedule.startTime}
+            onChange={(event) => {
+              const startTime = normalizeTime(event.target.value);
+              const duration = Number(followUpSchedule.appointment.durationMinutes || followUpSchedule.appointment.service?.durationMinutes || 30);
+              setFollowUpSchedule((current) => ({ ...current, startTime, endTime: addMinutesToTime(startTime, duration) }));
+            }}
+            disabled={followUpSlotsLoading || followUpSlots.length === 0}
+          >
+            <option value="">{followUpSlotsLoading ? "Loading available slots..." : followUpSlots.length === 0 ? "No slots available" : "Select available slot"}</option>
+            {followUpSlots.map((slot) => <option key={slot} value={normalizeTime(slot)}>{formatTime(normalizeTime(slot))}</option>)}
+          </select>
         </div>
-        <div className="appointment-overview-grid">
-          <section className="appointment-overview-section"><h4><span aria-hidden="true">♙</span>Patient Information</h4><div className="appointment-patient-overview"><div className="appointment-overview-avatar">{initials({ firstName: viewingAppointment.patientName })}</div><div><strong>{viewingAppointment.patientName || "Unknown patient"}</strong><span>{viewingAppointment.phoneNo || viewingAppointment.patientPhone || "-"}</span></div></div></section>
-          <section className="appointment-overview-section"><h4><span aria-hidden="true">✚</span>Consultation Details</h4><div className="appointment-overview-detail"><span>Doctor</span><strong>{viewingAppointment.doctorName || viewingAppointment.doctor?.name || "-"}</strong></div><div className="appointment-overview-detail"><span>Service</span><strong>{viewingAppointment.serviceName || viewingAppointment.service?.name || "-"}</strong></div><div className="appointment-overview-detail"><span>Appointment Code</span><strong>{viewingAppointment.appointmentCode || "-"}</strong></div></section>
-          <section className="appointment-overview-section"><div className="appointment-overview-section-heading"><h4><span aria-hidden="true">▤</span>Payment Information</h4><span className={`status ${String(viewingAppointment.paymentStatus || "").toLowerCase()}`}>{viewingAppointment.paymentStatus || "-"}</span></div><div className="appointment-overview-detail"><span>Amount Due</span><strong>{viewingAppointment.remainingAmount == null && viewingAppointment.amountDue == null ? "-" : formatCurrency(viewingAppointment.remainingAmount ?? viewingAppointment.amountDue)}</strong></div><div className="appointment-overview-detail"><span>Payment Method</span><strong>{viewingAppointment.paymentMethod || "-"}</strong></div></section>
-          <section className="appointment-overview-section"><h4><span aria-hidden="true">▦</span>Queue Information</h4><div className="appointment-overview-detail"><span>Queue Number</span><strong>{viewingAppointment.queueNumber || viewingAppointment.queueCode || "-"}</strong></div><div className="appointment-overview-detail"><span>Suggested Follow-up</span><strong>{viewingAppointment.suggestedFollowUpDate || "-"}</strong></div><div className="appointment-overview-detail"><span>Source</span><strong>{viewingAppointment.source || viewingAppointment.bookingSource || "-"}</strong></div></section>
-        </div>
+        <Field label="End Time *" type="time" value={followUpSchedule.endTime} disabled />
       </div>
+      {followUpScheduleError && <div className="auth-error" style={{ marginTop: 12 }}>{followUpScheduleError}</div>}
     </Modal>}
     {paymentAppointment && <AppointmentPaymentDialog
       appointment={paymentAppointment}
+      clinicId={clinicId}
       token={token}
       onClose={() => setPaymentAppointment(null)}
       onPaymentCollected={handleReceptionPaymentCollected}
@@ -2882,7 +3356,7 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
     try {
       setUpdatingAppointmentId(appointmentId);
       setFollowUpScheduleError("");
-      await followUpAppointment(Number(appointmentId), followUpSchedule.date, token);
+      await followUpAppointment(Number(appointmentId), followUpSchedule.date, token, clinicId);
       setInProgressAppointments((items) => items.filter((appointment) => appointment.id !== appointmentId));
       setFollowUpSchedule(null);
       showToast(`Follow-up scheduled for ${followUpSchedule.date} at ${formatTime(followUpSchedule.slot)}`);
@@ -2903,7 +3377,7 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
     try {
       setUpdatingAppointmentId(appointmentId);
       setError("");
-      const updated = await updateAppointmentStatus(appointmentId, nextStatus, token);
+      const updated = await updateAppointmentStatus(appointmentId, nextStatus, token, clinicId);
       const currentAppointment = [...inProgressAppointments, ...waitingAppointments].find((appointment) => appointment.id === appointmentId);
       const changedAppointment = { ...currentAppointment, ...(updated || {}), status: updated?.status || nextStatus };
       setInProgressAppointments((items) => items.filter((appointment) => appointment.id !== appointmentId));
@@ -2950,6 +3424,7 @@ function AppointmentQueue({ clinicId, token, userRole, userDoctorId, search, sho
   </Modal>}
   {paymentAppointment && <AppointmentPaymentDialog
     appointment={paymentAppointment}
+    clinicId={clinicId}
     token={token}
     onClose={() => setPaymentAppointment(null)}
     onPaymentCollected={handleQueuePaymentCollected}
@@ -3349,7 +3824,7 @@ function Settings({ showToast, clinicId, clinicName, token, canViewClinicProfile
 
       try {
         setLoadingClinics(true);
-        const result = await getClinicProfiles(token);
+        const result = await getClinicProfiles(token, clinicId);
         const profiles = Array.isArray(result) ? result : [];
         const visibleProfiles = canViewClinicProfile
           ? profiles
@@ -3364,7 +3839,7 @@ function Settings({ showToast, clinicId, clinicName, token, canViewClinicProfile
 
     loadClinics();
     return () => { cancelled = true; };
-  }, [token, canViewClinicProfile]);
+  }, [token, clinicId, canViewClinicProfile]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3599,11 +4074,11 @@ function Settings({ showToast, clinicId, clinicName, token, canViewClinicProfile
       };
       let createdClinic = null;
       if (editingClinicId === null) {
-        createdClinic = await saveClinicProfile(payload, token);
+        createdClinic = await saveClinicProfile(payload, token, clinicId);
       } else {
         await updateClinicProfile(editingClinicId, payload, token);
       }
-      const result = await getClinicProfiles(token);
+      const result = await getClinicProfiles(token, clinicId);
       setClinics(Array.isArray(result) ? result : []);
       setEditingClinicId(null);
       const savedMessage = createdClinic?.message || (editingClinicId === null ? "Clinic profile saved" : "Clinic profile updated");
@@ -3806,6 +4281,240 @@ function Settings({ showToast, clinicId, clinicName, token, canViewClinicProfile
       setClinicQrError(err.message || "Unable to generate clinic QR code.");
     } finally {
       setClinicQrLoading(false);
+    }
+  }
+
+  async function createClinicQrTemplateBlob() {
+    if (!clinicQr?.image) throw new Error("Generate the clinic QR code before sharing it.");
+
+    const loadImage = (source) => new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Unable to load the clinic QR template images."));
+      image.src = source;
+    });
+    const [logo, qrImage, whatsappImage] = await Promise.all([
+      loadImage(holaMdLogo),
+      loadImage(clinicQr.image),
+      loadImage(whatsAppIcon),
+    ]);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 1000;
+    canvas.height = 1215;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Unable to create the clinic QR template image.");
+
+    const roundedRect = (x, y, width, height, radius, fill, stroke, lineWidth = 1) => {
+      context.beginPath();
+      context.roundRect(x, y, width, height, radius);
+      if (fill) {
+        context.fillStyle = fill;
+        context.fill();
+      }
+      if (stroke) {
+        context.lineWidth = lineWidth;
+        context.strokeStyle = stroke;
+        context.stroke();
+      }
+    };
+    const drawCircleImage = (image, x, y, size) => {
+      context.save();
+      context.beginPath();
+      context.arc(x + size / 2, y + size / 2, size / 2, 0, Math.PI * 2);
+      context.clip();
+      context.drawImage(image, x, y, size, size);
+      context.restore();
+    };
+    const fitText = (text, maxWidth, fontSize, weight = 700) => {
+      let size = fontSize;
+      context.font = `${weight} ${size}px Arial, sans-serif`;
+      while (context.measureText(text).width > maxWidth && size > 22) {
+        size -= 1;
+        context.font = `${weight} ${size}px Arial, sans-serif`;
+      }
+      return size;
+    };
+
+    const background = context.createLinearGradient(0, 0, 1000, 1215);
+    background.addColorStop(0, "#f8fbf8");
+    background.addColorStop(1, "#eaf3ed");
+    roundedRect(5, 5, 990, 1205, 50, background, "#d8e2dc", 8);
+
+    drawCircleImage(logo, 42, 38, 116);
+    context.fillStyle = "#214d44";
+    context.font = "700 46px Arial, sans-serif";
+    context.fillText("Hola MD", 180, 91);
+    context.fillStyle = "#5d7c73";
+    context.font = "24px Arial, sans-serif";
+    context.fillText("Your Health, Our Care", 182, 123);
+
+    roundedRect(650, 54, 308, 100, 42, "#e0eee6");
+    context.fillStyle = "#214d44";
+    context.font = "700 50px Arial, sans-serif";
+    context.fillText("+", 682, 119);
+    const clinicNameSize = fitText(clinicQrDisplayName, 224, 31);
+    context.font = `700 ${clinicNameSize}px Arial, sans-serif`;
+    context.fillText(clinicQrDisplayName, 737, 116);
+
+    roundedRect(155, 190, 690, 690, 48, "#f8fbf8", "#dbe8e0", 7);
+    roundedRect(185, 220, 630, 630, 32, "#ffffff");
+    context.drawImage(qrImage, 208, 243, 584, 584);
+
+    roundedRect(42, 927, 916, 244, 46, "#e0eee6");
+    drawCircleImage(whatsappImage, 72, 971, 154);
+    context.fillStyle = "#173c32";
+    context.font = "700 38px Arial, sans-serif";
+    context.fillText("Scan this QR code", 255, 1032);
+    context.font = "24px Arial, sans-serif";
+    const caption = `Book your first appointment with ${clinicQrDisplayName} on WhatsApp.`;
+    const captionMaxWidth = 665;
+    const words = caption.split(/\s+/);
+    const lines = [];
+    let line = "";
+    for (const word of words) {
+      const nextLine = line ? `${line} ${word}` : word;
+      if (context.measureText(nextLine).width > captionMaxWidth && line) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = nextLine;
+      }
+    }
+    if (line) lines.push(line);
+    lines.slice(0, 2).forEach((captionLine, index) => {
+      context.fillText(captionLine, 255, 1075 + index * 34);
+    });
+
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("Unable to create the clinic QR template image."));
+      }, "image/png");
+    });
+  }
+
+  async function handleClinicQrPrint() {
+    if (!clinicQr?.image) {
+      setClinicQrError("Generate the clinic QR code before printing it.");
+      return;
+    }
+
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      setClinicQrError("Allow pop-ups to print the clinic QR code.");
+      return;
+    }
+
+    const printDocument = printWindow.document;
+    printDocument.title = `${clinicQrDisplayName} QR Code`;
+    printDocument.body.innerHTML = "";
+    const style = printDocument.createElement("style");
+    style.textContent = "*,*:before,*:after{box-sizing:border-box}body{margin:0;padding:24px;font-family:Arial,sans-serif;color:#214d44;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}.clinic-qr-card{width:min(100%,520px);margin:0 auto;overflow:hidden;border:2px solid #d8e2dc;border-radius:24px;background:linear-gradient(145deg,#f8fbf8,#eaf3ed);box-shadow:0 10px 28px rgba(35,68,60,.1)}.clinic-qr-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 16px 10px}.clinic-qr-brand{display:flex;align-items:center;gap:10px;min-width:0}.clinic-qr-brand img{width:52px;height:52px;flex:0 0 52px;border-radius:50%;object-fit:cover;background:#fff}.clinic-qr-brand-copy{display:flex;flex-direction:column;line-height:1.15}.clinic-qr-brand-copy strong{font-size:20px;white-space:nowrap}.clinic-qr-brand-copy span{font-size:10px;color:#5d7c73;white-space:nowrap}.clinic-qr-name{display:flex;align-items:center;gap:8px;min-width:0;padding:11px 12px;border-radius:18px;background:#e0eee6}.clinic-qr-name-icon{font-size:24px;font-weight:800;line-height:1}.clinic-qr-name strong{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.qr-panel{padding:12px 16px 16px}.qr-frame{width:min(100%,360px);margin:0 auto;padding:12px;border:3px solid #dbe8e0;border-radius:24px;background:#f8fbf8;box-shadow:0 5px 14px rgba(35,68,60,.08)}.qr-image{display:block;width:100%;padding:7px;border-radius:14px;background:#fff}.clinic-qr-footer{display:flex;align-items:center;gap:12px;margin:0 10px 10px;padding:12px 14px;border-radius:22px;background:#e0eee6;color:#173c32}.whatsapp-icon{width:60px;height:60px;flex:0 0 60px;display:block;object-fit:contain;border-radius:50%;box-shadow:0 2px 5px rgba(35,68,60,.18)}.footer-copy{display:flex;flex-direction:column;gap:4px;min-width:0}.footer-copy strong{font-size:18px}.footer-copy span{font-size:13px;line-height:1.4}@page{margin:12mm}@media print{body{padding:0}.clinic-qr-card{width:min(100%,150mm);box-shadow:none;break-inside:avoid}}";
+    const card = printDocument.createElement("main");
+    card.className = "clinic-qr-card";
+    const header = printDocument.createElement("header");
+    header.className = "clinic-qr-header";
+    const brand = printDocument.createElement("div");
+    brand.className = "clinic-qr-brand";
+    const logo = printDocument.createElement("img");
+    logo.alt = "";
+    const brandCopy = printDocument.createElement("div");
+    brandCopy.className = "clinic-qr-brand-copy";
+    const brandName = printDocument.createElement("strong");
+    brandName.textContent = "Hola MD";
+    const tagline = printDocument.createElement("span");
+    tagline.textContent = "Your Health, Our Care";
+    brandCopy.append(brandName, tagline);
+    brand.append(logo, brandCopy);
+    const clinicNameBadge = printDocument.createElement("div");
+    clinicNameBadge.className = "clinic-qr-name";
+    const clinicIcon = printDocument.createElement("span");
+    clinicIcon.className = "clinic-qr-name-icon";
+    clinicIcon.setAttribute("aria-hidden", "true");
+    clinicIcon.textContent = "✚";
+    const clinicNameElement = printDocument.createElement("strong");
+    clinicNameElement.textContent = clinicQrDisplayName;
+    clinicNameBadge.append(clinicIcon, clinicNameElement);
+    header.append(brand, clinicNameBadge);
+    const qrPanel = printDocument.createElement("section");
+    qrPanel.className = "qr-panel";
+    const qrFrame = printDocument.createElement("div");
+    qrFrame.className = "qr-frame";
+    const image = printDocument.createElement("img");
+    image.className = "qr-image";
+    image.alt = `WhatsApp QR code for ${clinicQrDisplayName}`;
+    qrFrame.appendChild(image);
+    qrPanel.appendChild(qrFrame);
+    const footer = printDocument.createElement("footer");
+    footer.className = "clinic-qr-footer";
+    const whatsappImage = printDocument.createElement("img");
+    whatsappImage.className = "whatsapp-icon";
+    whatsappImage.alt = "";
+    const footerCopy = printDocument.createElement("div");
+    footerCopy.className = "footer-copy";
+    const prompt = printDocument.createElement("strong");
+    prompt.textContent = "Scan this QR code";
+    const caption = printDocument.createElement("span");
+    caption.textContent = `Book your first appointment with ${clinicQrDisplayName} on WhatsApp.`;
+    footerCopy.append(prompt, caption);
+    footer.append(whatsappImage, footerCopy);
+    card.append(header, qrPanel, footer);
+    printDocument.head.appendChild(style);
+    printDocument.body.appendChild(card);
+
+    const imageSources = [
+      [logo, holaMdLogo],
+      [image, clinicQr.image],
+      [whatsappImage, whatsAppIcon],
+    ];
+    const imageLoads = imageSources.map(([element, source]) => new Promise((resolve, reject) => {
+      element.onload = resolve;
+      element.onerror = () => reject(new Error("Unable to load the clinic QR template images for printing."));
+      element.src = source;
+    }));
+    try {
+      await Promise.all(imageLoads);
+      printWindow.focus();
+      printWindow.print();
+    } catch (err) {
+      printWindow.close();
+      setClinicQrError(err.message || "Unable to load the clinic QR template for printing.");
+    }
+  }
+
+  async function handleClinicQrShare() {
+    try {
+      const templateBlob = await createClinicQrTemplateBlob();
+      if (typeof File !== "undefined" && navigator.share) {
+        const file = new File([templateBlob], `clinic-${clinicId}-qr-template.png`, { type: "image/png" });
+        if (navigator.canShare?.({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: `${clinicQrDisplayName} WhatsApp QR Code`,
+            text: `Scan this QR code to book an appointment with ${clinicQrDisplayName} on WhatsApp.`,
+          });
+          return;
+        }
+      }
+
+      if (navigator.clipboard?.write && window.ClipboardItem) {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": templateBlob })]);
+        showToast("Clinic QR template copied. Paste it into a message to share.");
+        return;
+      }
+
+      const downloadUrl = URL.createObjectURL(templateBlob);
+      const downloadLink = document.createElement("a");
+      downloadLink.href = downloadUrl;
+      downloadLink.download = `clinic-${clinicId}-qr-template.png`;
+      downloadLink.click();
+      URL.revokeObjectURL(downloadUrl);
+      showToast("Clinic QR template downloaded so you can share it.");
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        showToast(err.message || "Unable to share the clinic QR code.");
+      }
     }
   }
 
@@ -4116,6 +4825,8 @@ const handleWhatsAppSignupResponse = async (response) => {
             <div className="quick-actions" style={{ justifyContent: "center", marginTop: 12 }}>
               <button className="btn btn-outline" onClick={() => window.open(clinicQr.image, "_blank", "noopener,noreferrer")}>Open QR Image</button>
               <a className="btn btn-primary" href={clinicQr.image} download={`clinic-${clinicId}-qr.png`}>Download QR</a>
+              <button className="btn btn-outline" onClick={handleClinicQrPrint}>Print QR</button>
+              <button className="btn btn-outline" onClick={handleClinicQrShare}>Share QR</button>
             </div>
           </div>}
         </div>

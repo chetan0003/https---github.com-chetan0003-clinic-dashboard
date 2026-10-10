@@ -1,6 +1,7 @@
 import React from "react";
 import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import holaMdLogo from "../assets/logo/hola-md-final-logo.png";
 
 export default function Login({ onSignup }) {
   const { login } = useAuth();
@@ -38,7 +39,7 @@ export default function Login({ onSignup }) {
     <div className="auth-page">
       <div className="auth-shell">
         <div className="auth-brand">
-          <div className="brand-logo">+</div>
+          <img className="brand-logo-image" src={holaMdLogo} alt="Hola MD logo" />
           <div>
             <div className="brand-name">Hola MD</div>
             <div className="auth-brand-sub">Booking Management Platform</div>

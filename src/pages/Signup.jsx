@@ -2,6 +2,7 @@ import React from "react";
 import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { createClinicUser } from "../services/api";
+import holaMdLogo from "../assets/logo/hola-md-final-logo.png";
 
 const initialForm = {
   username: "",
@@ -79,7 +80,7 @@ export default function Signup({ onLogin, onSignupSuccess }) {
     <div className="auth-page signup-page">
       <div className="auth-shell signup-shell">
         <div className="auth-brand">
-          <div className="brand-logo">+</div>
+          <img className="brand-logo-image" src={holaMdLogo} alt="Hola MD logo" />
           <div>
             <div className="brand-name">Hola MD</div>
             <div className="auth-brand-sub">Create clinic dashboard access</div>
